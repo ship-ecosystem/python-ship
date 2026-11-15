@@ -19,8 +19,10 @@ def load_extensions(config: ShipConfig) -> tuple[dict, dict]:
             for point in entry_points(group=group)
             if point.name == selected
         ]
-        if len(matches) != 1:
-            raise ConfigError(f"Extension {selected!r} must match exactly one installed python_ship entry point.")
+        if not matches:
+            raise ConfigError(f"Extension {selected!r} is not installed as a python_ship entry point; install its distribution in the Ship CLI environment.")
+        if len(matches) > 1:
+            raise ConfigError(f"Extension {selected!r} matches multiple python_ship entry points; give each extension a unique entry point name.")
         kind, point = matches[0]
         if kind == "server":
             continue
@@ -32,10 +34,18 @@ def load_extensions(config: ShipConfig) -> tuple[dict, dict]:
         if not isinstance(getattr(extension, "key", None), str) or not re.fullmatch(r"[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*", extension.key) or extension.key in target:
             raise ConfigError(f"Extension {selected!r} has an invalid or duplicate key.")
         expected = ("detect", "validate", "development_command", "production_command", "console_commands", "release_commands") if kind == "adapter" else ("group", "label", "compose_fragment", "app_environment")
-        if any(not hasattr(extension, attr) for attr in expected):
+        if any(not callable(getattr(extension, attr, None)) for attr in expected if attr not in {"group", "label"}):
             raise ConfigError(f"Extension {selected!r} does not implement the {kind} contract.")
-        if kind == "service" and (not isinstance(extension.group, str) or not re.fullmatch(r"[a-z][a-z0-9_-]*", extension.group)):
-            raise ConfigError(f"Extension {selected!r} has an invalid service group.")
+        if kind == "service":
+            if not isinstance(getattr(extension, "group", None), str) or not re.fullmatch(r"[a-z][a-z0-9_-]*", extension.group):
+                raise ConfigError(f"Extension {selected!r} has an invalid service group.")
+            if not isinstance(getattr(extension, "label", None), str) or not extension.label:
+                raise ConfigError(f"Extension {selected!r} has an invalid service label.")
+            optional = ("compose_fragment_for", "app_environment_for", "validate", "database_shell")
+        else:
+            optional = ("server_target", "production_startup_commands")
+        if any(hasattr(extension, method) and not callable(getattr(extension, method)) for method in optional):
+            raise ConfigError(f"Extension {selected!r} has an invalid optional {kind} hook.")
         target[extension.key] = extension
     return adapters, services
 
@@ -48,7 +58,7 @@ def load_servers(config: ShipConfig) -> dict:
         if not matches:
             continue
         if len(matches) != 1:
-            raise ConfigError(f"Extension {selected!r} must match exactly one installed python_ship entry point.")
+            raise ConfigError(f"Extension {selected!r} matches multiple python_ship server entry points; give each extension a unique entry point name.")
         try:
             server = matches[0].load()()
         except Exception as exc:

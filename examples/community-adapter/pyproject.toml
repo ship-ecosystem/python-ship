@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "python-ship-example-starlette-adapter"
+version = "0.1.0"
+description = "Installable Starlette framework adapter example for Python Ship"
+requires-python = ">=3.11"
+dependencies = ["python-ship>=0.1.0.dev5,<0.2"]
+
+[project.entry-points."python_ship.adapters"]
+example-starlette = "ship_example_starlette_adapter:ExampleStarletteAdapter"
+
+[tool.setuptools.packages.find]
+where = ["src"]

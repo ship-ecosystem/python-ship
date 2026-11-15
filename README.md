@@ -431,20 +431,13 @@ The project then opts into each plugin by entry point name in `ship.json`:
 }
 ```
 
-See [the public contracts](src/python_ship/contracts.py). Plugins must already
-be installed in the environment where the `ship` CLI runs. An unknown or
-duplicate extension is reported as a configuration error. Framework adapters
-provide validation, development and production commands, console commands, and
-declarative `release_commands`. The Django adapter declares a migration command
-for a future release workflow; Ship does not execute release commands during
-`ship up` or on container boot. Community adapters implement the same contract.
-Service definitions may also provide `compose_fragment_for(config, instance)`
-and `app_environment_for(config, instance)` to use the selected instance's
-name, prefix, and network. A database service may provide
-`database_shell(config, instance)` for `ship db`. Set `development_only = True`
-on a service to omit it and its app variables from the production Compose model.
-Ship merges app fragment maps and lists with its base service and reports scalar
-conflicts instead of silently replacing existing settings.
+See the [extension author guide](docs/extensions.md) and
+[public contracts](src/python_ship/contracts.py). Plugins must be installed in
+the environment where the `ship` CLI runs. The app's dependencies are installed
+separately inside its Docker image. The two installable examples demonstrate a
+[service](examples/community-service) and a
+[Starlette adapter](examples/community-adapter). Unknown, duplicate, or broken
+extensions are reported as configuration errors.
 
 A community ASGI server supplies `key`, one PEP 508 `requirement`, and
 `development_command(target)` / `production_command(target)` methods that
@@ -455,10 +448,10 @@ hook keeps its own commands when Uvicorn is selected.
 
 ## Current scope
 
-This scaffold implements development Compose generation, lifecycle commands,
-generic/Django/FastAPI adapters, a growing built-in service catalog, Uvicorn or
-Hypercorn, and plugin loading. Production builds, portable releases, and broader
-dependency manager support are next work.
+This scaffold implements development and production Compose generation,
+lifecycle commands, generic/Django/FastAPI adapters, a growing built-in service
+catalog, Uvicorn or Hypercorn, community extensions, production builds, and
+portable releases.
 The Dockerfile and image tags are starting points and should be reviewed
 before the first public release.
 See the [roadmap](docs/roadmap.md) for the ordered checklist toward PHP Ship

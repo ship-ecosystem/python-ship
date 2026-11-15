@@ -262,15 +262,20 @@ verification checkbox remains open alongside the deferred platform CI work.
 
 ## 8. Prove the community extension model
 
-- [ ] Publish a small third-party service example as a separate installable
+- [x] Provide a small third-party service example as a separate installable
   package, selected through `ship.json`, and verify it runs in Docker.
-- [ ] Publish a small third-party framework adapter example and verify it can
+- [x] Provide a small third-party framework adapter example and verify it can
   supply commands and production behavior without changing core code.
-- [ ] Document the supported contracts, entry point names, version policy,
+- [x] Document the supported contracts, entry point names, version policy,
   dependency requirements, and how plugin errors are reported.
-- [ ] Test duplicate names, missing distributions, broken constructors,
+- [x] Test duplicate names, missing distributions, broken constructors,
   invalid implementations, and plugin behavior across init, build, and
   release.
+
+Both examples build as independent wheels and load through their installed
+entry points. Docker-backed checks exercised development HTTP responses,
+production builds, release creation, and HTTP responses from release archives.
+Publishing the distributions publicly remains part of Phase 9.
 
 ## 9. Ship and maintain the package
 

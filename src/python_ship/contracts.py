@@ -8,6 +8,8 @@ if TYPE_CHECKING:
 
 
 class FrameworkAdapter(Protocol):
+    """Required adapter members. Commands are Docker Compose command lists."""
+
     key: str
 
     def detect(self, project_root: Path) -> bool: ...
@@ -21,6 +23,18 @@ class FrameworkAdapter(Protocol):
     def console_commands(self) -> dict[str, list[str]]: ...
 
     def release_commands(self, config: "ShipConfig") -> list[list[str]]: ...
+
+
+class ServerTargetCapability(Protocol):
+    """Optional adapter hook for using a selected ASGI server."""
+
+    def server_target(self, config: "ShipConfig") -> str: ...
+
+
+class ProductionStartupCapability(Protocol):
+    """Optional adapter hook run before each production server start."""
+
+    def production_startup_commands(self, config: "ShipConfig") -> list[list[str]]: ...
 
 
 class ServiceDefinition(Protocol):

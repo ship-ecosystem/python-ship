@@ -30,3 +30,11 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 python_ship = ["templates/Dockerfile", "templates/garage/Dockerfile", "templates/garage/garage.toml"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.mypy]
+files = ["src/python_ship"]
+ignore_missing_imports = true
+show_error_codes = true

@@ -1,6 +1,5 @@
 """Opt-in production startup checks for all built-in framework adapters."""
 
-import json
 from dataclasses import replace
 import os
 from pathlib import Path

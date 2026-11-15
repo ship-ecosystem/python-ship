@@ -292,6 +292,14 @@ Publishing the distributions publicly remains part of Phase 9.
   repository, build wheel and source distribution, test installation from the
   artifacts, then publish the first release.
 
+Phase 9 local preparation: `scripts/check_local.py` runs pinned lint and type
+checks, unit tests, and `scripts/check_package.py`. The package check builds a
+wheel and source distribution, installs each in a fresh environment, and
+exercises the installed `ship` CLI against a plain ASGI project. Quick start,
+command reference, and production deployment guides are in `docs/`.
+Cross-platform CI, broader user documentation, GitHub/PyPI setup, and
+publication remain open.
+
 **Completion criterion:** a framework-free Python app, a Django app, and a
 FastAPI app can each go from `ship init` to a verified development stack and a
 portable production release. Community packages can add a service or adapter

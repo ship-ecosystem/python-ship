@@ -36,6 +36,7 @@ def load_extensions(config: ShipConfig) -> tuple[dict, dict]:
         expected = ("detect", "validate", "development_command", "production_command", "console_commands", "release_commands") if kind == "adapter" else ("group", "label", "compose_fragment", "app_environment")
         if any(not callable(getattr(extension, attr, None)) for attr in expected if attr not in {"group", "label"}):
             raise ConfigError(f"Extension {selected!r} does not implement the {kind} contract.")
+        optional: tuple[str, ...]
         if kind == "service":
             if not isinstance(getattr(extension, "group", None), str) or not re.fullmatch(r"[a-z][a-z0-9_-]*", extension.group):
                 raise ConfigError(f"Extension {selected!r} has an invalid service group.")

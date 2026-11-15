@@ -1,6 +1,6 @@
 # Python Ship
 
-An early scaffold for a framework-agnostic Docker development environment for
+An early release of a framework-agnostic Docker development environment for
 Python web apps, inspired by [PHP Ship](https://github.com/php-ship/ship).
 This is a separate Python package and repository. Plain ASGI, Django, and
 FastAPI apps use the same public adapter contract; infrastructure services use
@@ -26,6 +26,9 @@ python -m pip install -e .
 The distribution name is provisionally `python-ship`, the import name is
 `python_ship`, and the installed command is `ship`. The intended repository is
 `github.com/python-ship/ship`. PyPI project ownership has not yet been claimed.
+
+Read the [quick start](docs/quickstart.md), [command reference](docs/commands.md),
+and [production deployment guide](docs/deployment.md) for task-focused steps.
 
 The `ship` entry point is one cross-platform Python CLI, like PHP Ship's PHP
 CLI. The uv tool installation above obtains an isolated Python for that CLI;
@@ -459,7 +462,20 @@ feature parity.
 
 ## Development
 
-Run the scaffold tests from this repository:
+Run the local release checks from this repository with uv and a host Python
+3.11 or newer:
+
+```sh
+python scripts/check_local.py
+```
+
+This creates temporary environments, installs pinned Ruff and mypy versions,
+runs lint, type checks, and unit tests, then builds the wheel and source
+distribution. Each artifact is installed separately, and its `ship` command
+initializes and validates a framework-free project outside this checkout.
+To run only the packaging check, use `python scripts/check_package.py`.
+
+To run only the unit tests in an environment with package dependencies:
 
 ```sh
 PYTHONPATH=src python -m unittest discover -s tests -v

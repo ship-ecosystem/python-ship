@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 
+from .contracts import ServiceDefinition
 from .storage import BUILTIN_STORAGE
 
 
@@ -156,7 +157,7 @@ class MailpitService:
 
     def compose_fragment_for(self, config, instance: dict) -> dict:
         name = instance["name"]
-        model = {"image": "axllent/mailpit:v1.31.1"}
+        model: dict = {"image": "axllent/mailpit:v1.31.1"}
         if not instance["prefix"]:
             model["ports"] = ["127.0.0.1:${MAILPIT_WEB_PORT:-8025}:8025"]
         return {name: model}
@@ -266,7 +267,7 @@ class NodeService:
         return {}
 
 
-BUILTIN_SERVICES = {service.key: service for service in (
+BUILTIN_SERVICES: dict[str, ServiceDefinition] = {service.key: service for service in (
     PostgresService(), MySqlService(), RedisService(), MailpitService(),
     MeilisearchService(), SeleniumService(), PlaywrightService(), NodeService(),
 )}

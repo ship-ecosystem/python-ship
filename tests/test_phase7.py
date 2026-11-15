@@ -1,6 +1,6 @@
 """Portable release planning, validation, and artifact safety."""
 
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import redirect_stderr
 from copy import deepcopy
 from io import StringIO
 import json

@@ -589,8 +589,8 @@ def _run(root: Path, args: SimpleNamespace) -> int:
         command = prefix + ["exec", node_services[0][1]["name"], "npm", *args.args]
     else:
         raise ConfigError(f"Unknown command {args.command!r}.")
-    result = subprocess.run(command, cwd=root, check=False)
-    if args.command == "up" and result.returncode == 0:
+    completed = subprocess.run(command, cwd=root, check=False)
+    if args.command == "up" and completed.returncode == 0:
         if mutagen_enabled():
             try:
                 start_mutagen(prefix, root, ("app", *config.processes))
@@ -599,7 +599,7 @@ def _run(root: Path, args: SimpleNamespace) -> int:
                 raise
         wait_for_stack(prefix, set(build_compose(config, root)["services"]))
         print("Ship stack is running and the app port is reachable.")
-    return result.returncode
+    return completed.returncode
 
 
 def main(argv: list[str] | None = None) -> int:

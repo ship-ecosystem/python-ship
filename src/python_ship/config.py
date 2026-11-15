@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import re
+from typing import Any
 
 
 class ConfigError(ValueError):
@@ -153,7 +154,7 @@ class ShipConfig:
         return cls(framework, data["app"], python, services, extensions, name, instances, networks, silo_image, server, publish_ports, processes, django_collectstatic, node_assets, deploy_commands), []
 
     def write(self, project_root: Path) -> None:
-        payload = {
+        payload: dict[str, Any] = {
             "framework": self.framework,
             "app": self.app,
             "python": self.python,

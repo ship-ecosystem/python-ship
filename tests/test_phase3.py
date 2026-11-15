@@ -1,7 +1,5 @@
 """Compose and extension behavior introduced in Phase 3."""
 
-from contextlib import redirect_stderr
-from io import StringIO
 import json
 from pathlib import Path
 import shutil

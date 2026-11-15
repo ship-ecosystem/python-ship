@@ -7,13 +7,15 @@ import re
 import os
 import shlex
 import sys
+from typing import Any
 
 from .config import ConfigError, ShipConfig
+from .contracts import ServiceDefinition
 from .plugins import load_extensions, load_servers
 from .mutagen import enabled as mutagen_enabled
 
 
-def selected_services(config: ShipConfig, services: dict) -> list[tuple[str, object, dict[str, str]]]:
+def selected_services(config: ShipConfig, services: dict[str, ServiceDefinition]) -> list[tuple[str, ServiceDefinition, dict[str, str]]]:
     """Resolve legacy selections and additional named instances."""
     selected = []
     names = {"app"}
@@ -29,13 +31,15 @@ def selected_services(config: ShipConfig, services: dict) -> list[tuple[str, obj
     for instance_id, raw in config.instances.items():
         if not isinstance(raw, dict):
             raise ConfigError(f"Instance {instance_id!r} must be an object.")
-        group, key = raw.get("group"), raw.get("service")
-        service = services.get(key)
-        if service is None or service.group != group:
-            raise ConfigError(f"Unknown service {key!r} in group {group!r} for instance {instance_id!r}.")
+        instance_group, instance_key = raw.get("group"), raw.get("service")
+        if not isinstance(instance_group, str) or not isinstance(instance_key, str):
+            raise ConfigError(f"Instance {instance_id!r} requires a service group and key.")
+        service = services.get(instance_key)
+        if service is None or service.group != instance_group:
+            raise ConfigError(f"Unknown service {instance_key!r} in group {instance_group!r} for instance {instance_id!r}.")
         name = raw.get("name", instance_id)
         prefix = raw.get("prefix", instance_id.upper().replace("-", "_"))
-        network = raw.get("network")
+        network: str | None = raw.get("network")
         if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*", name):
             raise ConfigError(f"Invalid Compose service name {name!r} for instance {instance_id!r}.")
         if name in names:
@@ -48,7 +52,7 @@ def selected_services(config: ShipConfig, services: dict) -> list[tuple[str, obj
             raise ConfigError(f"Unknown external network alias {network!r} for instance {instance_id!r}.")
         names.add(name)
         prefixes.add(prefix)
-        spec = {"group": group, "service": key, "name": name, "prefix": prefix}
+        spec = {"group": instance_group, "service": instance_key, "name": name, "prefix": prefix}
         if network:
             spec["network"] = network
         selected.append((instance_id, service, spec))
@@ -84,7 +88,7 @@ def _replace_strings(value, replacements: dict[str, str]):
 
 
 def _local_ports(ports: list, service_name: str) -> list:
-    localized = []
+    localized: list[Any] = []
     for port in ports:
         if isinstance(port, dict):
             localized.append({"host_ip": "127.0.0.1", **port})
@@ -191,7 +195,7 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
         raise ConfigError(f"Adapter {config.framework!r} returned an invalid command.")
     if production:
         try:
-            startup = getattr(adapter, "production_startup_commands", lambda config: [])(config)
+            startup: list[list[str]] = getattr(adapter, "production_startup_commands", lambda config: [])(config)
         except Exception as exc:
             raise ConfigError(f"Adapter {config.framework!r} production startup commands failed: {exc}") from exc
         if not isinstance(startup, list) or any(
@@ -201,7 +205,7 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
             raise ConfigError(f"Adapter {config.framework!r} returned invalid production startup commands.")
         if startup:
             command = ["sh", "-c", " && ".join([*(shlex.join(parts) for parts in startup), "exec " + shlex.join(command)])]
-    app = {
+    app: dict[str, Any] = {
         "build": {"context": ".", "dockerfile": "ship/Dockerfile", "target": "production" if production else "development", "args": {"PYTHON_VERSION": config.python, "SHIP_SERVER_REQUIREMENT": server.requirement}},
         "command": command,
         "working_dir": "/app",
@@ -217,8 +221,8 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
             app["user"] = f"{os.getuid()}:{os.getgid()}"
     elif config.publish_ports:
         app["ports"] = ["${SHIP_PRODUCTION_PORT:-8000}:8000"]
-    compose = {"name": name, "services": {"app": app}}
-    volumes = {}
+    compose: dict[str, Any] = {"name": name, "services": {"app": app}}
+    volumes: dict[str, None] = {}
     extra_networks = set()
     selections = selected_services(config, services)
     for instance_id, service, spec in selections:

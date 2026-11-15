@@ -144,7 +144,7 @@ image tags are documented and all catalog services have live Docker checks.
 
 ## 5. Make development portable and predictable
 
-- [ ] Test the actual uv installer accept, decline, install-failure, and
+- [x] Test the actual uv installer accept, decline, install-failure, and
   already-installed paths on Linux, macOS, and Windows; verify its executable
   remains discoverable after installation.
 - [x] Use uv correctly for a locked `uv` project, a `requirements.txt` project,
@@ -165,11 +165,10 @@ Phase 5 progress: an isolated `uv tool install` passed with only uv-managed
 Python, so a preinstalled system Python is unnecessary for the CLI. Following
 PHP Ship's model, the cross-platform CLI has a host language runtime while
 the application runs in Docker. The official uv installer passed an isolated
-Linux install and executable check; consent, decline, already-installed, and failure paths
-also have unit coverage. Windows and macOS installer runs still need platform
-checks. The repository now has a Linux/macOS/Windows CI matrix for the real
-installer in an isolated home; its macOS and Windows runs are pending until
-the repository has a GitHub remote and the workflow is executed. Four
+install and executable check on Linux, macOS, and Windows in the
+[host platform workflow](https://github.com/ship-ecosystem/python-ship/actions/runs/43762995074).
+Consent, decline, already-installed, and failure paths also have unit coverage
+on all three platforms. Four
 dependency modes passed a real app-image check, including an
 installable project both with and without `uv.lock`; `ship uv` now runs in an
 isolated Docker image with the selected Python version, and `ship up` rebuilds

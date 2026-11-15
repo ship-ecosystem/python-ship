@@ -37,11 +37,11 @@ class PhaseFiveTests(unittest.TestCase):
         command = run.call_args.args[0]
         self.assertEqual(["docker", "run", "--rm", "--interactive"], command[:4])
         self.assertEqual(["uv", "add", "httpx", "--dev"], command[-4:])
-        self.assertIn(f"{self.root}:/app", command)
+        self.assertIn(f"{self.root.resolve()}:/app", command)
         self.assertIn(f"ghcr.io/astral-sh/uv:{UV_VERSION}-python3.13-trixie-slim", command)
         self.assertIn("UV_NO_SYNC=1", command)
         self.assertIn("UV_PROJECT_ENVIRONMENT=/tmp/ship-uv-venv", command)
-        self.assertEqual(self.root, run.call_args.kwargs["cwd"])
+        self.assertEqual(self.root.resolve(), run.call_args.kwargs["cwd"])
 
     def test_ship_uv_explains_missing_docker_and_unsafe_commands(self):
         with patch("python_ship.cli.shutil.which", return_value=None), redirect_stderr(StringIO()) as errors:
@@ -83,7 +83,12 @@ class PhaseFiveTests(unittest.TestCase):
     def test_official_uv_installer_in_isolated_home(self):
         with tempfile.TemporaryDirectory(prefix="ship-uv-installer-") as home:
             original_which = shutil.which
-            with patch.dict(os.environ, {"HOME": home, "USERPROFILE": home, "UV_NO_MODIFY_PATH": "1"}), patch(
+            # UV_INSTALL_DIR isolates the install. Replacing USERPROFILE on Windows
+            # also changes PowerShell's module lookup and can break its installer.
+            installer_env = {"UV_NO_MODIFY_PATH": "1"}
+            if os.name != "nt":
+                installer_env["HOME"] = home
+            with patch.dict(os.environ, installer_env), patch(
                 "python_ship.uv.Path.home", return_value=Path(home)
             ), patch("python_ship.uv.shutil.which", side_effect=lambda name: None if name == "uv" else original_which(name)), patch("builtins.input", return_value="yes"):
                 executable = require_uv()

@@ -1,4 +1,4 @@
-name: Phase 5 platforms
+name: Host platform tests
 
 on:
   push:

@@ -24,7 +24,8 @@ from .uv import UV_VERSION, require_uv
 DOCKERIGNORE = (
     ".env\n.env.*\n!.env.example\n"
     "**/.env\n**/.env.*\n**/.venv\n**/__pycache__\n"
-    ".git\ndist/\nship/compose.generated.json\n"
+    "**/*.pem\n**/*.key\n**/id_rsa\n**/id_ed25519\nsecrets/\n"
+    ".git\ndist/\nship/compose.generated.json\nship/compose.production.json\n"
 )
 
 
@@ -92,6 +93,12 @@ def init_command(
 def config_test_command() -> int:
     """Validate configuration without starting Docker."""
     return _execute("config:test")
+
+
+@app.command("config:production")
+def config_production_command() -> int:
+    """Write a separate production Compose model."""
+    return _execute("config:production")
 
 
 @app.command("doctor")
@@ -259,6 +266,13 @@ def _server_stub_problem(root: Path, config: ShipConfig) -> str | None:
     return None
 
 
+def _production_stub_problem(root: Path) -> str | None:
+    dockerfile = root / "ship" / "Dockerfile"
+    if not dockerfile.is_file() or "AS production" not in dockerfile.read_text(encoding="utf-8"):
+        return "ship/Dockerfile has no production stage; run `ship init --force` to refresh it."
+    return None
+
+
 def _garage_stub_problems(root: Path, config: ShipConfig) -> list[str]:
     selected = "garage" in config.services.values() or any(
         instance.get("service") == "garage" for instance in config.instances.values()
@@ -350,6 +364,14 @@ def _run(root: Path, args: SimpleNamespace) -> int:
         if warning:
             typer.echo(f"ship: warning: {warning}", err=True)
         print("ship.json and the development Compose model are valid.")
+        return 0
+    if args.command == "config:production":
+        config = ShipConfig.read(root)
+        problem = _production_stub_problem(root)
+        if problem:
+            raise ConfigError(problem)
+        path = write_compose(config, root, production=True)
+        print(path)
         return 0
     if args.command == "doctor":
         problems = _config_problems(root)

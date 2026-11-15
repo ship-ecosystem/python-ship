@@ -114,6 +114,18 @@ Run `ship doctor` to see the Ship, Python, server, and service image versions,
 published Dockerfile warning, and each container's state and health. It reports
 missing, exited, restarting, or unhealthy services with a recovery command.
 
+## Production model (Phase 6 in progress)
+
+Run `ship config:production` to write `ship/compose.production.json` from the
+same `ship.json` used for development. This model builds the `production`
+Dockerfile target, reads `.env.production`, omits the source bind mount, and
+does not publish the app port. It has a separate Compose project name from
+development. The image runs as UID 10001 and contains the
+installed app and ASGI server without uv or pip. Run `ship init --force` in an
+existing project to publish the new multi-stage Dockerfile before using this
+command. Credential validation, production processes, and deployment checks
+are the next Phase 6 steps.
+
 Running `ship init` again preserves the existing selections, extensions, and
 Dockerfile. Ship records the version of its published Dockerfile and warns when
 it differs from the installed package. Use `ship init --force` to refresh that

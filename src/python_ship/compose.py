@@ -172,6 +172,8 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
         name = "ship-" + name
     if not re.fullmatch(r"[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*", name):
         raise ConfigError(f"Invalid Compose project name {name!r}.")
+    if production:
+        name += "-production"
     try:
         if hasattr(adapter, "server_target"):
             target = adapter.server_target(config)
@@ -187,10 +189,10 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
     if not isinstance(command, list) or not command or any(not isinstance(part, str) or not part for part in command):
         raise ConfigError(f"Adapter {config.framework!r} returned an invalid command.")
     app = {
-        "build": {"context": ".", "dockerfile": "ship/Dockerfile", "args": {"PYTHON_VERSION": config.python, "SHIP_SERVER_REQUIREMENT": server.requirement}},
+        "build": {"context": ".", "dockerfile": "ship/Dockerfile", "target": "production" if production else "development", "args": {"PYTHON_VERSION": config.python, "SHIP_SERVER_REQUIREMENT": server.requirement}},
         "command": command,
         "working_dir": "/app",
-        "env_file": [{"path": ".env", "required": False}],
+        "env_file": [{"path": ".env.production", "required": True}] if production else [{"path": ".env", "required": False}],
         "environment": {},
         "restart": "unless-stopped",
     }
@@ -273,12 +275,19 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
         if "ship-app.test" not in aliases:
             aliases.append("ship-app.test")
         app["networks"] = networks
+    if production:
+        for service_name, model in compose["services"].items():
+            for mount in model.get("volumes", []):
+                if isinstance(mount, str) and mount.split(":", 1)[0].startswith((".", "/", "~")):
+                    raise ConfigError(f"Production service {service_name!r} cannot use a host bind mount.")
+                if isinstance(mount, dict) and mount.get("type") == "bind":
+                    raise ConfigError(f"Production service {service_name!r} cannot use a host bind mount.")
     return compose
 
 
-def write_compose(config: ShipConfig, project_root: Path) -> Path:
-    model = build_compose(config, project_root)
-    destination = project_root / "ship" / "compose.generated.json"
+def write_compose(config: ShipConfig, project_root: Path, *, production: bool = False) -> Path:
+    model = build_compose(config, project_root, production=production)
+    destination = project_root / "ship" / ("compose.production.json" if production else "compose.generated.json")
     destination.parent.mkdir(exist_ok=True)
     destination.write_text(json.dumps(model, indent=2) + "\n", encoding="utf-8")
     return destination

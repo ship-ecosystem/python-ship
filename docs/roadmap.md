@@ -189,9 +189,9 @@ dependencies.
 
 ## 6. Build a production image and production config
 
-- [ ] Generate separate development and production Compose files from the
+- [x] Generate separate development and production Compose files from the
   same project config; production must have no source bind mount.
-- [ ] Build a production Python image using uv and declared locks, with a
+- [x] Build a production Python image using uv and declared locks, with a
   non-root runtime, a predictable process command, and no development tools
   or secret files baked in.
 - [ ] Put framework-specific production behavior in adapters: Django
@@ -205,6 +205,16 @@ dependencies.
   missing credentials, unsafe settings, and conflicting names together.
 - [ ] Verify a production HTTP request, database connection, and container
   restart for generic ASGI, Django, and FastAPI fixtures.
+
+Phase 6 progress: `ship config:production` generates a separate Compose file
+and project name. The app has no source bind mount or published port, and
+production rejects host bind mounts from extensions. A multi-stage Dockerfile
+uses uv in the builder and runs the production app as UID 10001 without uv or
+pip. A live generic ASGI Docker check passed HTTP startup and verified that
+`.env.production` was absent from the image. Existing projects must refresh
+their published Dockerfile with `ship init --force` before using the production
+target. Credential validation, adapter deployment behavior, extra processes,
+and the full production fixture matrix remain open.
 
 ## 7. Produce portable releases
 

@@ -1,5 +1,6 @@
 ARG PYTHON_VERSION=3.13
 FROM python:${PYTHON_VERSION}-slim
+ARG SHIP_SERVER_REQUIREMENT="uvicorn>=0.53,<1"
 COPY --from=ghcr.io/astral-sh/uv:@UV_VERSION@ /uv /uvx /bin/
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -24,7 +25,7 @@ RUN if [ -f uv.lock ] && [ -f pyproject.toml ]; then \
       uv pip install .; \
     fi
 
-# Ship supplies the default ASGI server even when the app has no dependencies.
-RUN uv pip install 'uvicorn>=0.53,<1'
+# Ship supplies the selected ASGI server even when the app has no dependencies.
+RUN uv pip install "$SHIP_SERVER_REQUIREMENT"
 
 EXPOSE 8000

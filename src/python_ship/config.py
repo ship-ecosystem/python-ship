@@ -21,6 +21,7 @@ class ShipConfig:
     instances: dict[str, dict[str, str]] = field(default_factory=dict)
     networks: dict[str, str] = field(default_factory=dict)
     silo_image: str = "distroless"
+    server: str = "uvicorn"
 
     @classmethod
     def read(cls, project_root: Path) -> "ShipConfig":
@@ -52,7 +53,7 @@ class ShipConfig:
         if not isinstance(data, dict):
             return None, ["ship.json must contain a JSON object."]
         problems = []
-        allowed = {"framework", "app", "python", "services", "extensions", "name", "instances", "networks", "silo_image"}
+        allowed = {"framework", "app", "python", "services", "extensions", "name", "instances", "networks", "silo_image", "server"}
         unknown = set(data) - allowed
         if unknown:
             problems.append(f"Unknown ship.json fields: {', '.join(sorted(unknown))}")
@@ -113,9 +114,12 @@ class ShipConfig:
         silo_image = data.get("silo_image", "distroless")
         if silo_image not in ("distroless", "standard"):
             problems.append("ship.json silo_image must be 'distroless' or 'standard'.")
+        server = data.get("server", "uvicorn")
+        if not isinstance(server, str) or not re.fullmatch(r"[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*", server):
+            problems.append("ship.json server must be a nonempty ASGI server key.")
         if problems:
             return None, problems
-        return cls(framework, data["app"], python, services, extensions, name, instances, networks, silo_image), []
+        return cls(framework, data["app"], python, services, extensions, name, instances, networks, silo_image, server), []
 
     def write(self, project_root: Path) -> None:
         payload = {
@@ -133,4 +137,6 @@ class ShipConfig:
             payload["networks"] = self.networks
         if self.silo_image != "distroless":
             payload["silo_image"] = self.silo_image
+        if self.server != "uvicorn":
+            payload["server"] = self.server
         (project_root / "ship.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")

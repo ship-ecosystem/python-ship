@@ -71,6 +71,34 @@ class ServiceCatalogDockerTests(unittest.TestCase):
         result = subprocess.run(self._prefix() + ["exec", "-T", "mysql", "mysql", "-uroot", "-prootship", "-e", "SELECT 1"], capture_output=True, text=True)
         self.assertEqual(0, result.returncode, result.stderr)
 
+    def test_mysql_data_survives_container_restart(self):
+        self._init_up("--database", "mysql")
+        command = self._prefix() + ["exec", "-T", "mysql", "mysql", "-uapp", "-pship", "app", "-e"]
+        created = subprocess.run(command + ["CREATE TABLE ship_persistence (value VARCHAR(30)); INSERT INTO ship_persistence VALUES ('kept');"], capture_output=True, text=True)
+        self.assertEqual(0, created.returncode, created.stderr)
+        self.assertEqual(0, self._ship("down"))
+        self.assertEqual(0, self._ship("up"))
+        result = subprocess.run(command + ["SELECT value FROM ship_persistence"], capture_output=True, text=True)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("kept", result.stdout)
+
+    def test_postgres_and_redis_data_survive_container_restart(self):
+        self._init_up("--database", "postgres", "--cache", "redis")
+        postgres = self._prefix() + ["exec", "-T", "postgres", "psql", "-U", "app", "-d", "app", "-tAc"]
+        redis = self._prefix() + ["exec", "-T", "redis", "redis-cli"]
+        created = subprocess.run(postgres + ["CREATE TABLE ship_persistence (value text); INSERT INTO ship_persistence VALUES ('kept');"], capture_output=True, text=True)
+        self.assertEqual(0, created.returncode, created.stderr)
+        saved = subprocess.run(redis + ["SET", "ship:persistence", "kept"], capture_output=True, text=True)
+        self.assertEqual(0, saved.returncode, saved.stderr)
+        self.assertEqual(0, self._ship("down"))
+        self.assertEqual(0, self._ship("up"))
+        row = subprocess.run(postgres + ["SELECT value FROM ship_persistence"], capture_output=True, text=True)
+        self.assertEqual(0, row.returncode, row.stderr)
+        self.assertIn("kept", row.stdout)
+        value = subprocess.run(redis + ["GET", "ship:persistence"], capture_output=True, text=True)
+        self.assertEqual(0, value.returncode, value.stderr)
+        self.assertEqual("kept", value.stdout.strip())
+
     def test_mailpit_smtp_and_web_ui(self):
         self._init_up("--mail", "mailpit")
         command = (
@@ -164,6 +192,60 @@ class ServiceCatalogDockerTests(unittest.TestCase):
             "browser.close(); p.stop()"
         )
         self.assertEqual(0, self._ship("exec", "app", "python", "-c", command))
+
+    def test_selenium_python_client_opens_app(self):
+        (self.root / "requirements.txt").write_text("selenium>=4.35,<5\n")
+        self._init_up("--testing", "selenium")
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                with urlopen(f"http://127.0.0.1:{self.app_port}/", timeout=2) as response:
+                    if response.read() == b"hello from plain ASGI":
+                        break
+            except OSError:
+                pass
+            if time.monotonic() >= deadline:
+                self.fail("Application HTTP did not become ready for browser tests")
+            time.sleep(0.5)
+        command = (
+            "import os; "
+            "from selenium import webdriver; "
+            "from selenium.webdriver.chrome.options import Options; "
+            "options=Options(); options.add_argument('--headless=new'); "
+            "driver=webdriver.Remote(command_executor=os.environ['SELENIUM_REMOTE_URL'],options=options); "
+            "driver.get(os.environ['APP_URL']); "
+            "assert driver.find_element('tag name','body').text=='hello from plain ASGI'; "
+            "driver.quit()"
+        )
+        self.assertEqual(0, self._ship("exec", "app", "python", "-c", command))
+
+    def test_hypercorn_serves_plain_asgi_and_reloads(self):
+        self._init_up("--server", "hypercorn")
+        endpoint = f"http://127.0.0.1:{self.app_port}/"
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                with urlopen(endpoint, timeout=2) as response:
+                    if response.read() == b"hello from plain ASGI":
+                        break
+            except OSError:
+                pass
+            if time.monotonic() >= deadline:
+                self.fail("Hypercorn did not serve the plain ASGI app")
+            time.sleep(0.5)
+        source = (self.root / "main.py").read_text()
+        (self.root / "main.py").write_text(source.replace("hello from plain ASGI", "hello after reload"))
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                with urlopen(endpoint, timeout=2) as response:
+                    if response.read() == b"hello after reload":
+                        break
+            except OSError:
+                pass
+            if time.monotonic() >= deadline:
+                self.fail("Hypercorn did not reload a bind-mounted app edit")
+            time.sleep(0.5)
 
     def _storage_object_round_trip(self, choice, *options):
         (self.root / "requirements.txt").write_text("boto3>=1.35,<2\n")

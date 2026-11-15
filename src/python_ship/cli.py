@@ -69,6 +69,7 @@ def _execute(command: str, **values: object) -> int:
 def init_command(
     app_target: Annotated[str | None, typer.Option("--app", help="ASGI import target, such as main:app")] = None,
     framework: Annotated[str | None, typer.Option(help="Framework adapter")] = None,
+    server: Annotated[str | None, typer.Option(help="ASGI server: uvicorn, hypercorn, or a selected extension")] = None,
     python_version: Annotated[str | None, typer.Option("--python", help="Container Python minor version")] = None,
     database: Annotated[str | None, typer.Option(help="Database service")] = None,
     cache: Annotated[str | None, typer.Option(help="Cache service")] = None,
@@ -81,7 +82,7 @@ def init_command(
     force: Annotated[bool, typer.Option(help="Refresh the published Dockerfile")] = False,
 ) -> int:
     """Create ship.json and a project Dockerfile."""
-    return _execute("init", app=app_target, framework=framework, python=python_version,
+    return _execute("init", app=app_target, framework=framework, server=server, python=python_version,
                     database=database, cache=cache, mail=mail, search=search,
                     storage=storage, silo_image=silo_image, testing=testing, frontend=frontend, force=force)
 
@@ -179,9 +180,13 @@ def _init(root: Path, args: SimpleNamespace) -> int:
         dict(existing.instances) if existing else {},
         dict(existing.networks) if existing else {},
         args.silo_image or (existing.silo_image if existing else "distroless"),
+        args.server or (existing.server if existing else "uvicorn"),
     )
     # Validate the complete model before writing any project files.
     build_compose(config, root)
+    server_stub_problem = _server_stub_problem(root, config)
+    if server_stub_problem and not args.force:
+        raise ConfigError(server_stub_problem)
     needs_garage = "garage" in config.services.values() or any(
         selection.get("service") == "garage" for selection in config.instances.values()
     )
@@ -234,6 +239,13 @@ def _stub_warning(root: Path) -> str | None:
     return None
 
 
+def _server_stub_problem(root: Path, config: ShipConfig) -> str | None:
+    dockerfile = root / "ship" / "Dockerfile"
+    if config.server != "uvicorn" and dockerfile.is_file() and "SHIP_SERVER_REQUIREMENT" not in dockerfile.read_text(encoding="utf-8"):
+        return "ship/Dockerfile cannot install the selected ASGI server; run `ship init --force` to refresh it."
+    return None
+
+
 def _garage_stub_problems(root: Path, config: ShipConfig) -> list[str]:
     selected = "garage" in config.services.values() or any(
         instance.get("service") == "garage" for instance in config.instances.values()
@@ -253,6 +265,9 @@ def _config_problems(root: Path) -> list[str]:
         problems.append("ship/Dockerfile is missing; run `ship init`.")
     if config is None:
         return problems
+    server_stub_problem = _server_stub_problem(root, config)
+    if server_stub_problem:
+        problems.append(server_stub_problem)
     problems.extend(_garage_stub_problems(root, config))
     try:
         adapters, services = load_extensions(config)
@@ -303,6 +318,9 @@ def _run(root: Path, args: SimpleNamespace) -> int:
         return 0
     config = ShipConfig.read(root)
     if args.command == "up":
+        server_stub_problem = _server_stub_problem(root, config)
+        if server_stub_problem:
+            raise ConfigError(server_stub_problem)
         stub_problems = _garage_stub_problems(root, config)
         if stub_problems:
             raise ConfigError(" ".join(stub_problems))

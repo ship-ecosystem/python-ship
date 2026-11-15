@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 
 from .config import ConfigError, ShipConfig
-from .plugins import load_extensions
+from .plugins import load_extensions, load_servers
 
 
 def selected_services(config: ShipConfig, services: dict) -> list[tuple[str, object, dict[str, str]]]:
@@ -148,6 +148,11 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
     if config.silo_image not in ("distroless", "standard"):
         raise ConfigError("ship.json silo_image must be 'distroless' or 'standard'.")
     adapters, services = load_extensions(config)
+    server = load_servers(config).get(config.server)
+    if server is None:
+        raise ConfigError(f"Unknown ASGI server {config.server!r}; select an installed python_ship.servers extension or use uvicorn/hypercorn.")
+    if not isinstance(server.requirement, str) or not server.requirement:
+        raise ConfigError(f"ASGI server {config.server!r} has no package requirement.")
     adapter = adapters.get(config.framework)
     if adapter is None:
         raise ConfigError(f"Unknown framework adapter {config.framework!r}.")
@@ -165,13 +170,21 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
     if not re.fullmatch(r"[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*", name):
         raise ConfigError(f"Invalid Compose project name {name!r}.")
     try:
-        command = adapter.production_command(config) if production else adapter.development_command(config)
+        if hasattr(adapter, "server_target"):
+            target = adapter.server_target(config)
+            if not isinstance(target, str) or not target:
+                raise ConfigError(f"Adapter {config.framework!r} returned an invalid ASGI server target.")
+            command = server.production_command(target) if production else server.development_command(target)
+        elif config.server == "uvicorn":
+            command = adapter.production_command(config) if production else adapter.development_command(config)
+        else:
+            raise ConfigError(f"Adapter {config.framework!r} does not support selectable ASGI servers.")
     except Exception as exc:
         raise ConfigError(f"Adapter {config.framework!r} command failed: {exc}") from exc
     if not isinstance(command, list) or not command or any(not isinstance(part, str) or not part for part in command):
         raise ConfigError(f"Adapter {config.framework!r} returned an invalid command.")
     app = {
-        "build": {"context": ".", "dockerfile": "ship/Dockerfile", "args": {"PYTHON_VERSION": config.python}},
+        "build": {"context": ".", "dockerfile": "ship/Dockerfile", "args": {"PYTHON_VERSION": config.python, "SHIP_SERVER_REQUIREMENT": server.requirement}},
         "command": command,
         "working_dir": "/app",
         "env_file": [{"path": ".env", "required": False}],

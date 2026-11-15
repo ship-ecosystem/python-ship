@@ -53,6 +53,9 @@ class GenericAdapter:
     def validate(self, config: ShipConfig, project_root: Path) -> list[str]:
         return _target_problem(project_root, config.app, "App", "main:app")
 
+    def server_target(self, config: ShipConfig) -> str:
+        return config.app
+
     def development_command(self, config: ShipConfig) -> list[str]:
         return ["python", "-m", "uvicorn", config.app, "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
@@ -82,6 +85,9 @@ class DjangoAdapter:
             problems.extend(_target_problem(project_root, config.app, "Django app", "project.asgi:application"))
         return problems
 
+    def server_target(self, config: ShipConfig) -> str:
+        return config.app
+
     def development_command(self, config: ShipConfig) -> list[str]:
         return ["python", "-m", "uvicorn", config.app, "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
@@ -104,6 +110,9 @@ class FastAPIAdapter:
 
     def validate(self, config: ShipConfig, project_root: Path) -> list[str]:
         return _target_problem(project_root, config.app, "FastAPI app", "app.main:app")
+
+    def server_target(self, config: ShipConfig) -> str:
+        return config.app
 
     def development_command(self, config: ShipConfig) -> list[str]:
         return ["python", "-m", "uvicorn", config.app, "--host", "0.0.0.0", "--port", "8000", "--reload"]

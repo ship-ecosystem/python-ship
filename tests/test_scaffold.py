@@ -45,7 +45,7 @@ class ScaffoldTests(unittest.TestCase):
         self.assertEqual("generic", config.framework)
         compose = build_compose(config, self.root)
         self.assertEqual(["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"], compose["services"]["app"]["command"])
-        self.assertIn("uv pip install 'uvicorn", (self.root / "ship" / "Dockerfile").read_text(encoding="utf-8"))
+        self.assertIn('uv pip install "$SHIP_SERVER_REQUIREMENT"', (self.root / "ship" / "Dockerfile").read_text(encoding="utf-8"))
         self.assertIn("uv sync --locked --no-dev", (self.root / "ship" / "Dockerfile").read_text(encoding="utf-8"))
 
     def test_declining_uv_aborts_init_without_writing_files(self):

@@ -96,9 +96,20 @@ starting Docker. The CLI uses Typer, including shell completion. Arguments after
 
 The application must read the injected `DB_*` or `REDIS_URL` variables in its
 own settings. Django and FastAPI projects declare those framework libraries in
-their own dependencies. Ship supplies Uvicorn; the Dockerfile uses `uv.lock`
+their own dependencies. Ship supplies Uvicorn by default; the Dockerfile uses `uv.lock`
 when present, otherwise installs `requirements.txt` or the project from
 `pyproject.toml` using uv. A plain ASGI app can have none of these files.
+
+### ASGI server choice
+
+Uvicorn is the default for plain ASGI, Django, and FastAPI apps. Select
+Hypercorn with `ship init --app main:app --server hypercorn`, or set
+`"server": "hypercorn"` in `ship.json`. Ship installs the selected server in
+the app image and uses its development reload command. The framework adapter
+still validates the app and provides framework commands; server choice is
+independent. If a project has an older `ship/Dockerfile`, run
+`ship init --force --server hypercorn` to publish the version that accepts
+`SHIP_SERVER_REQUIREMENT`.
 
 ### Application settings for PostgreSQL and Redis
 
@@ -145,7 +156,23 @@ at `http://127.0.0.1:8025`. Set `MAILPIT_WEB_PORT` in `.env` if that host port
 is occupied. Meilisearch injects `MEILISEARCH_URL` and `MEILISEARCH_KEY`;
 set `MEILISEARCH_KEY` to a real secret for production. Selenium injects
 `SELENIUM_REMOTE_URL` and `APP_URL` for browser tests. Install the `selenium`
-Python library in the app if tests use its client. Alternatively, select
+Python library in the app if tests use its client:
+
+```python
+import os
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+
+options = Options()
+options.add_argument("--headless=new")
+driver = webdriver.Remote(
+    command_executor=os.environ["SELENIUM_REMOTE_URL"], options=options
+)
+driver.get(os.environ["APP_URL"])
+driver.quit()
+```
+
+Alternatively, select
 `--testing playwright` to run a Playwright browser server. It injects
 `PLAYWRIGHT_WS_URL=ws://playwright:3000/` and `APP_URL=http://ship-app.test:8000` into
 the app container. Declare `playwright==1.64.1` in the app's test dependencies;
@@ -281,7 +308,10 @@ An installed package can register an adapter or a service in its
 flask = "ship_flask:FlaskAdapter"
 
 [project.entry-points."python_ship.services"]
-mailpit = "ship_mailpit:MailpitService"
+mailhog = "ship_mailhog:MailHogService"
+
+[project.entry-points."python_ship.servers"]
+community = "ship_community:CommunityServer"
 ```
 
 The project then opts into each plugin by entry point name in `ship.json`:
@@ -290,8 +320,8 @@ The project then opts into each plugin by entry point name in `ship.json`:
 {
   "framework": "flask",
   "app": "app:app",
-  "services": {"mail": "mailpit"},
-  "extensions": ["flask", "mailpit"]
+  "services": {"mail": "mailhog"},
+  "extensions": ["flask", "mailhog"]
 }
 ```
 
@@ -310,13 +340,19 @@ on a service to omit it and its app variables from the production Compose model.
 Ship merges app fragment maps and lists with its base service and reports scalar
 conflicts instead of silently replacing existing settings.
 
+A community ASGI server supplies `key`, one PEP 508 `requirement`, and
+`development_command(target)` / `production_command(target)` methods that
+return Compose command lists. Select its entry point in `extensions` and its
+key in `server`. A framework adapter can opt into server selection by providing
+`server_target(config)`; the built-in adapters do this. An adapter without that
+hook keeps its own commands when Uvicorn is selected.
+
 ## Current scope
 
 This scaffold implements development Compose generation, lifecycle commands,
-generic/Django/FastAPI adapters, a growing built-in service catalog, and
-plugin loading. Production builds and portable releases, broader dependency
-manager support, alternate web servers, and remaining Docker integration checks
-are next work.
+generic/Django/FastAPI adapters, a growing built-in service catalog, Uvicorn or
+Hypercorn, and plugin loading. Production builds, portable releases, and broader
+dependency manager support are next work.
 The Dockerfile and image tags are starting points and should be reviewed
 before the first public release.
 See the [roadmap](docs/roadmap.md) for the ordered checklist toward PHP Ship
@@ -338,7 +374,7 @@ SHIP_DOCKER_TEST=1 PYTHONPATH=src python -m unittest discover -s tests -p test_f
 ```
 
 The same flag enables the named-instance and external-network test in
-`tests/test_phase3_docker.py` and the MySQL, Mailpit, Meilisearch, and Node
-checks in `tests/test_service_catalog_docker.py`. The same file has optional
-Playwright and S3 service checks. These tests create and remove
+`tests/test_phase3_docker.py` and the live service checks in
+`tests/test_service_catalog_docker.py`, including database persistence,
+Selenium, Playwright, and S3 storage. These tests create and remove
 temporary Docker containers, volumes, images, and networks.

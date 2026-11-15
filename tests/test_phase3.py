@@ -118,7 +118,7 @@ class PhaseThreeTests(unittest.TestCase):
             compose = build_compose(ShipConfig("generic", "main:app", services={"search": "extra"}), self.root)
         app = compose["services"]["app"]
         self.assertEqual("ship/Dockerfile", app["build"]["dockerfile"])
-        self.assertEqual({"PYTHON_VERSION": "3.13", "EXTRA": "yes"}, app["build"]["args"])
+        self.assertEqual({"PYTHON_VERSION": "3.13", "SHIP_SERVER_REQUIREMENT": "uvicorn>=0.53,<1", "EXTRA": "yes"}, app["build"]["args"])
         self.assertIn(".:/app", app["volumes"])
         self.assertIn("./extra:/extra", app["volumes"])
         self.assertIn("127.0.0.1:${SHIP_APP_PORT:-8000}:8000", app["ports"])

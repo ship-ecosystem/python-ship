@@ -117,32 +117,30 @@ later catalog and release phases.
 - [x] Add S3-compatible storage choices equivalent to the PHP package's
   Garage, SeaweedFS, RustFS, and Silo support, including their provisioning,
   health, volume, image, and CPU constraints.
-- [ ] Add Selenium and Playwright browser-testing services appropriate for
+- [x] Add Selenium and Playwright browser-testing services appropriate for
   Python test suites, with the same easy-to-select role that Dusk/Selenium has
   in PHP Ship; verify both in real Docker stacks.
 - [x] Support Node and frontend asset workflows, including an accessible HMR
   port, without making Node mandatory for a plain Python app.
-- [ ] Make the ASGI server/runtime selectable beyond Uvicorn, with a public
+- [x] Make the ASGI server/runtime selectable beyond Uvicorn, with a public
   extension path for community server choices. Keep the app framework
   independent from that choice.
-- [ ] Pin and document service image versions; test every selected service
+- [x] Pin and document service image versions; test every selected service
   against a real Docker daemon.
 
-Phase 4 progress: PostgreSQL and Redis were exercised with Django and FastAPI
-in Phase 2. MySQL, Mailpit, Meilisearch, and Node now have isolated live Docker
-checks; MySQL uses separate application and root accounts, Mailpit captures an
-SMTP message, Meilisearch accepts an authenticated API request, and Node serves
-an HTTP response through the published HMR port. Named data volumes, health
-checks, production omission, and image tags are covered by Compose model
-checks. Garage, SeaweedFS, RustFS, and both Silo image variants now pass live
-S3 bucket and object operations. SeaweedFS also rejects unknown credentials
-and accepts a secret containing a quote and backslash. Garage's build files
-ship in the wheel and are republished by `ship init` when missing. Playwright
-is selectable with matching server and client versions; a
-live Python client opened the framework-free app through Chromium. The browser
-services use a `.test` network alias because browsers force the single-label
-`app` host to HTTPS. A live Selenium check, alternate ASGI servers,
-and live persistence checks remain before Phase 4 is complete.
+Phase 4 complete. PostgreSQL, MySQL, and Redis kept data across container
+restarts in live Docker checks. Mailpit captured SMTP mail, Meilisearch accepted
+an authenticated API request, and Node served an HTTP response through its HMR
+port. Garage, SeaweedFS, RustFS, and both Silo image variants passed live S3
+bucket and object operations. SeaweedFS rejected unknown credentials and
+accepted a secret containing a quote and backslash. Garage's build files ship
+in the wheel and are republished by `ship init` when missing. Python clients
+opened a framework-free app through both Selenium Chrome and Playwright
+Chromium. The browser services use a `.test` network alias because browsers
+force the single-label `app` host to HTTPS. Hypercorn served and reloaded a
+framework-free ASGI app in Docker; built-in framework adapters and third-party
+server entry points use the same server selection contract. Built-in service
+image tags are documented and all catalog services have live Docker checks.
 
 ## 5. Make development portable and predictable
 

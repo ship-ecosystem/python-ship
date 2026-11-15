@@ -45,3 +45,14 @@ class DatabaseShellCapability(Protocol):
     """Optional command used by `ship db`."""
 
     def database_shell(self, config: "ShipConfig", instance: dict[str, str]) -> list[str]: ...
+
+
+class ASGIServerDefinition(Protocol):
+    """Installed through a python_ship.servers entry point and selected in ship.json."""
+
+    key: str
+    requirement: str
+
+    def development_command(self, target: str) -> list[str]: ...
+
+    def production_command(self, target: str) -> list[str]: ...

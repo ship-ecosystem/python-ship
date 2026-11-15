@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "python-ship"
-version = "0.1.0.dev0"
+version = "0.1.0.dev1"
 description = "Docker development environments for Python web apps"
 readme = "README.md"
 requires-python = ">=3.11"

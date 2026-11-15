@@ -7,7 +7,7 @@ import subprocess
 import sys
 from tempfile import TemporaryDirectory
 from urllib.error import URLError
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from .config import ConfigError
 
@@ -21,7 +21,7 @@ def locate_uv() -> str | None:
         return found
     # The official standalone installer may not update this process's PATH.
     local = Path.home() / ".local" / "bin" / ("uv.exe" if os.name == "nt" else "uv")
-    return str(local) if local.is_file() else None
+    return str(local) if local.is_file() and (os.name == "nt" or os.access(local, os.X_OK)) else None
 
 
 def _install_uv() -> None:
@@ -39,7 +39,7 @@ def _install_uv() -> None:
     else:
         url = f"https://astral.sh/uv/{UV_VERSION}/install.sh"
         try:
-            with urlopen(url, timeout=30) as response:
+            with urlopen(Request(url, headers={"User-Agent": "python-ship/0.1"}), timeout=30) as response:
                 script = response.read()
         except (OSError, URLError) as exc:
             raise ConfigError(f"Could not download uv installer from {url}: {exc}") from exc

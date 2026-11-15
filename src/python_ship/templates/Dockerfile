@@ -22,7 +22,7 @@ RUN if [ -f uv.lock ] && [ -f pyproject.toml ]; then \
     elif [ -f requirements.txt ]; then \
       uv pip install -r requirements.txt; \
     elif [ -f pyproject.toml ]; then \
-      uv pip install .; \
+      uv sync --no-dev; \
     fi
 
 # Ship supplies the selected ASGI server even when the app has no dependencies.

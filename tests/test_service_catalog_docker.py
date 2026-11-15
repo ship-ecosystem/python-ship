@@ -247,6 +247,34 @@ class ServiceCatalogDockerTests(unittest.TestCase):
                 self.fail("Hypercorn did not reload a bind-mounted app edit")
             time.sleep(0.5)
 
+    def test_uv_dependency_modes_and_host_owned_files(self):
+        self._init_up()
+        self.assertEqual(0, self._ship("exec", "app", "python", "-c", "import uvicorn"))
+        self.assertEqual(0, self._ship("exec", "app", "python", "-c", "from pathlib import Path; Path('/app/generated.txt').write_text('ship')"))
+        if hasattr(os, "getuid") and sys.platform.startswith("linux"):
+            self.assertEqual(os.getuid(), (self.root / "generated.txt").stat().st_uid)
+            self.assertEqual(os.getgid(), (self.root / "generated.txt").stat().st_gid)
+
+        (self.root / "requirements.txt").write_text("httpx==0.28.1\n")
+        self.assertEqual(0, self._ship("up"))
+        self.assertEqual(0, self._ship("exec", "app", "python", "-c", "import httpx; assert httpx.__version__ == '0.28.1'"))
+
+        (self.root / "requirements.txt").unlink()
+        (self.root / "appmark.py").write_text("VALUE = 'installed'\n")
+        (self.root / "pyproject.toml").write_text(
+            '[build-system]\nrequires = ["setuptools>=77"]\nbuild-backend = "setuptools.build_meta"\n'
+            '[project]\nname = "ship-phase5-fixture"\nversion = "0.1.0"\nrequires-python = ">=3.13"\n'
+            '[tool.setuptools]\npy-modules = ["appmark"]\n'
+        )
+        self.assertEqual(0, self._ship("up"))
+        check = "import importlib.metadata; assert importlib.metadata.version('ship-phase5-fixture') == '0.1.0'; import uvicorn"
+        self.assertEqual(0, self._ship("exec", "app", "python", "-c", check))
+
+        self.assertEqual(0, self._ship("uv", "lock"))
+        self.assertTrue((self.root / "uv.lock").is_file())
+        self.assertEqual(0, self._ship("up"))
+        self.assertEqual(0, self._ship("exec", "app", "python", "-c", check))
+
     def _storage_object_round_trip(self, choice, *options):
         (self.root / "requirements.txt").write_text("boto3>=1.35,<2\n")
         self._init_up("--storage", choice, *options)

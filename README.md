@@ -78,14 +78,20 @@ ship exec app python -m alembic upgrade head
 `ship/compose.generated.json`, then invokes Docker Compose. Compose accepts
 JSON files. Project code is bind mounted for development, and port 8000 binds
 to localhost by default. Set `SHIP_APP_PORT` in the project `.env` to choose a
-different localhost port. A project `.env` is loaded into the app container when present.
+different localhost port, especially when running two Ship projects at once.
+Compose scopes networks and named volumes by project name; set a distinct
+`name` in each `ship.json` if the directory names would collide. A project
+`.env` is loaded into the app container when present.
 `compose.override.yaml` is applied when present. Use
 `ship logs`, `ship shell`, `ship exec`, and `ship down --volumes` as needed.
 Use `ship --project-directory /path/to/project COMMAND` to run any development
 command from another working directory; the override is resolved from that
-project root for `up`, `down`, `logs`, `shell`, `exec`, `manage`, and `db`.
+project root for `up`, `down`, `logs`, `shell`, `exec`, `manage`, `db`, and `uv`.
 `ship up` waits for the expected containers, their healthchecks, and a reachable
 app port before reporting success. If startup fails, inspect `ship logs`.
+Run `ship doctor` to see the Ship, Python, server, and service image versions,
+published Dockerfile warning, and each container's state and health. It reports
+missing, exited, restarting, or unhealthy services with a recovery command.
 
 Running `ship init` again preserves the existing selections, extensions, and
 Dockerfile. Ship records the version of its published Dockerfile and warns when
@@ -99,6 +105,23 @@ own settings. Django and FastAPI projects declare those framework libraries in
 their own dependencies. Ship supplies Uvicorn by default; the Dockerfile uses `uv.lock`
 when present, otherwise installs `requirements.txt` or the project from
 `pyproject.toml` using uv. A plain ASGI app can have none of these files.
+
+Use `ship uv add PACKAGE`, `ship uv lock`, or other `ship uv` arguments to run
+uv in the host project directory. This edits the project's `pyproject.toml`
+and `uv.lock` without syncing Ship's container environment, so an exact uv
+sync cannot remove Ship's supplied ASGI server. Run `ship up` afterward to
+rebuild the app image with changed dependencies. A locked uv project uses
+`uv sync --locked --no-dev`; an unlocked `pyproject.toml` uses
+`uv sync --no-dev`; `requirements.txt` uses `uv pip install -r`. An installable
+project is installed by uv, while a project without dependencies can omit all
+three files. If you use `uv` directly inside the app container, an exact
+`uv sync` can remove Ship's server; `ship up` restores the image.
+
+On Linux, the development app container runs with the host user's numeric
+UID and GID so files created in the bind mounted project remain editable on
+the host. On macOS and Windows, Docker Desktop handles bind mount ownership;
+Ship leaves the container's default user in place. Production user policy is
+separate from this development setting.
 
 ### ASGI server choice
 

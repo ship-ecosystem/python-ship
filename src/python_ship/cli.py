@@ -16,8 +16,8 @@ from . import __version__
 from .compose import build_compose, selected_services, write_compose
 from .config import ConfigError, ShipConfig
 from .plugins import load_extensions
-from .runtime import wait_for_stack
-from .uv import UV_VERSION, require_uv
+from .runtime import _records, _status, wait_for_stack
+from .uv import UV_VERSION, locate_uv, require_uv
 
 
 DOCKERIGNORE = (
@@ -93,6 +93,12 @@ def config_test_command() -> int:
     return _execute("config:test")
 
 
+@app.command("doctor")
+def doctor_command() -> int:
+    """Report project versions and live container health."""
+    return _execute("doctor")
+
+
 @app.command("up")
 def up_command() -> int:
     """Generate Compose and start the development stack."""
@@ -142,6 +148,12 @@ def manage_command(ctx: typer.Context) -> int:
 def npm_command(ctx: typer.Context) -> int:
     """Run npm inside the optional Node container."""
     return _execute("npm", args=_proxy_tail("npm", 1))
+
+
+@app.command("uv", context_settings=PROXY_CONTEXT)
+def uv_command(ctx: typer.Context) -> int:
+    """Run uv on the host project; rebuild with `ship up` to apply changes in Docker."""
+    return _execute("uv", args=_proxy_tail("uv", 1))
 
 
 def _ensure_dockerignore(root: Path) -> None:
@@ -305,6 +317,15 @@ def _config_problems(root: Path) -> list[str]:
 def _run(root: Path, args: SimpleNamespace) -> int:
     if args.command == "init":
         return _init(root, args)
+    if args.command == "uv":
+        if not (root / "ship.json").is_file():
+            raise ConfigError("No ship.json found; run `ship init` first.")
+        executable = locate_uv()
+        if executable is None:
+            raise ConfigError("uv is required; run `ship init` to install it or install uv yourself.")
+        if not args.args:
+            raise ConfigError("ship uv requires uv arguments, such as `ship uv add httpx` or `ship uv lock`.")
+        return subprocess.run([executable, *args.args], cwd=root, check=False).returncode
     if args.command == "config:test":
         problems = _config_problems(root)
         for problem in problems:
@@ -315,6 +336,39 @@ def _run(root: Path, args: SimpleNamespace) -> int:
         if warning:
             typer.echo(f"ship: warning: {warning}", err=True)
         print("ship.json and the development Compose model are valid.")
+        return 0
+    if args.command == "doctor":
+        problems = _config_problems(root)
+        for problem in problems:
+            typer.echo(f"ship: {problem}", err=True)
+        if problems:
+            return 1
+        config = ShipConfig.read(root)
+        model = build_compose(config, root)
+        print(f"Ship {__version__}; project {model['name']}; Python {config.python}; ASGI server {config.server}")
+        published_version = root / "ship" / ".ship-version"
+        print("Published Dockerfile: " + (published_version.read_text(encoding="utf-8").strip() if published_version.is_file() else "unversioned"))
+        warning = _stub_warning(root)
+        if warning:
+            typer.echo(f"ship: warning: {warning}", err=True)
+        prefix = _compose_prefix(root, config)
+        result = subprocess.run(prefix + ["ps", "--all", "--format", "json"], cwd=root, capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            raise ConfigError(f"Could not inspect Docker Compose: {result.stderr.strip()}. Check Docker and run `ship up`.")
+        records = _records(result.stdout)
+        fatal, pending, _ = _status(records, set(model["services"]))
+        for name, service in model["services"].items():
+            record = records.get(name, {})
+            image = service.get("image", "local build")
+            state = record.get("State", "missing")
+            health = record.get("Health")
+            print(f"{name}: {image}; {state}" + (f"; health {health}" if health else ""))
+        if fatal or pending:
+            for problem in [*fatal, *pending]:
+                typer.echo(f"ship: {problem}", err=True)
+            typer.echo("ship: run `ship logs SERVICE` for failures, then `ship up` to rebuild or restart the stack.", err=True)
+            return 1
+        print("All selected services are running and the app port is published.")
         return 0
     config = ShipConfig.read(root)
     if args.command == "up":

@@ -147,19 +147,32 @@ image tags are documented and all catalog services have live Docker checks.
 - [ ] Test the actual uv installer accept, decline, install-failure, and
   already-installed paths on Linux, macOS, and Windows; verify its executable
   remains discoverable after installation.
-- [ ] Use uv correctly for a locked `uv` project, a `requirements.txt` project,
+- [x] Use uv correctly for a locked `uv` project, a `requirements.txt` project,
   an installable `pyproject.toml` project, and a dependency-free app; verify
   generated image behavior, not only Dockerfile text.
-- [ ] Provide a `ship uv` workflow for project dependency commands without
+- [x] Provide a `ship uv` workflow for project dependency commands without
   losing Ship's supplied server when uv syncs the environment.
-- [ ] Handle host UID/GID in development so container-generated files are
+- [x] Handle host UID/GID in development so container-generated files are
   usable on Linux; define the equivalent behavior for Windows and macOS.
 - [ ] Add optional Mutagen sync for slow bind mounts on Windows/macOS; exclude
   platform-specific environments and avoid dependency-install races.
-- [ ] Verify two Ship projects can run at once without network, volume, or
+- [x] Verify two Ship projects can run at once without network, volume, or
   port collisions; explain how users choose alternate host ports.
-- [ ] Add service/version/stub diagnostics and clear recovery messages for
+- [x] Add service/version/stub diagnostics and clear recovery messages for
   crashed or unhealthy containers.
+
+Phase 5 progress: the official uv installer passed an isolated Linux install
+and executable check; consent, decline, already-installed, and failure paths
+also have unit coverage. Windows and macOS installer runs still need platform
+checks. Four dependency modes passed a real app-image check, including an
+installable project both with and without `uv.lock`; `ship uv` runs on the host
+and `ship up` rebuilds the image. Linux container-generated files retained the
+host UID/GID. Docker Desktop uses its own bind-mount ownership behavior on
+macOS and Windows. Two concurrent stacks passed port, network, and Redis data
+isolation checks. `ship doctor` reports selected service images and container
+health. Optional Mutagen sync remains to be implemented and verified. Mutagen
+Compose is deprecated, so this needs a current synchronization path rather
+than relying on its old Compose wrapper.
 
 ## 6. Build a production image and production config
 

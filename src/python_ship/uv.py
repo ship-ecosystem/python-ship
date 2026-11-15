@@ -31,6 +31,9 @@ def _install_uv() -> None:
         powershell = shutil.which("powershell") or shutil.which("pwsh")
         if powershell is None:
             raise ConfigError("PowerShell is required to install uv automatically on Windows.")
+        # A parent PowerShell 7 session can pass its module path to Windows
+        # PowerShell 5.1, making the latter load the wrong Security module.
+        environment = {key: value for key, value in environment.items() if key.casefold() != "psmodulepath"}
         command = [
             powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
             f"irm https://astral.sh/uv/{UV_VERSION}/install.ps1 | iex",

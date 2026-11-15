@@ -83,8 +83,8 @@ class PhaseFiveTests(unittest.TestCase):
     def test_official_uv_installer_in_isolated_home(self):
         with tempfile.TemporaryDirectory(prefix="ship-uv-installer-") as home:
             original_which = shutil.which
-            # UV_INSTALL_DIR isolates the install. Replacing USERPROFILE on Windows
-            # also changes PowerShell's module lookup and can break its installer.
+            # UV_INSTALL_DIR isolates the install without changing the system
+            # profile used by PowerShell on Windows.
             installer_env = {"UV_NO_MODIFY_PATH": "1"}
             if os.name != "nt":
                 installer_env["HOME"] = home

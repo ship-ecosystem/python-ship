@@ -79,7 +79,7 @@ class ScaffoldTests(unittest.TestCase):
         compose = build_compose(config, self.root)
         self.assertEqual(["python", "-m", "uvicorn", "project.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--reload"], compose["services"]["app"]["command"])
         self.assertEqual(["python", "-m", "uvicorn", "project.asgi:application", "--host", "0.0.0.0", "--port", "8000"], DjangoAdapter().production_command(config))
-        self.assertEqual([["python", "manage.py", "migrate", "--noinput"]], DjangoAdapter().release_commands(config))
+        self.assertEqual([], DjangoAdapter().release_commands(config))
 
     def test_invalid_service_fails(self):
         config = ShipConfig("fastapi", "app.main:app", services={"database": "unknown"})

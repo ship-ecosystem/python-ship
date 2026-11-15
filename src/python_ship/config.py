@@ -26,6 +26,7 @@ class ShipConfig:
     processes: dict[str, list[str]] = field(default_factory=dict)
     django_collectstatic: bool = False
     node_assets: bool = False
+    deploy_commands: list[list[str]] = field(default_factory=list)
 
     @classmethod
     def read(cls, project_root: Path) -> "ShipConfig":
@@ -57,7 +58,7 @@ class ShipConfig:
         if not isinstance(data, dict):
             return None, ["ship.json must contain a JSON object."]
         problems = []
-        allowed = {"framework", "app", "python", "services", "extensions", "name", "instances", "networks", "silo_image", "server", "publish_ports", "processes", "django_collectstatic", "node_assets"}
+        allowed = {"framework", "app", "python", "services", "extensions", "name", "instances", "networks", "silo_image", "server", "publish_ports", "processes", "django_collectstatic", "node_assets", "deploy_commands"}
         unknown = set(data) - allowed
         if unknown:
             problems.append(f"Unknown ship.json fields: {', '.join(sorted(unknown))}")
@@ -141,9 +142,15 @@ class ShipConfig:
         node_assets = data.get("node_assets", False)
         if not isinstance(node_assets, bool):
             problems.append("ship.json node_assets must be a boolean.")
+        deploy_commands = data.get("deploy_commands", [])
+        if not isinstance(deploy_commands, list) or any(
+            not isinstance(command, list) or not command or any(not isinstance(part, str) or not part for part in command)
+            for command in deploy_commands
+        ):
+            problems.append("ship.json deploy_commands must be a list of nonempty command argument lists.")
         if problems:
             return None, problems
-        return cls(framework, data["app"], python, services, extensions, name, instances, networks, silo_image, server, publish_ports, processes, django_collectstatic, node_assets), []
+        return cls(framework, data["app"], python, services, extensions, name, instances, networks, silo_image, server, publish_ports, processes, django_collectstatic, node_assets, deploy_commands), []
 
     def write(self, project_root: Path) -> None:
         payload = {
@@ -171,4 +178,6 @@ class ShipConfig:
             payload["django_collectstatic"] = True
         if self.node_assets:
             payload["node_assets"] = True
+        if self.deploy_commands:
+            payload["deploy_commands"] = self.deploy_commands
         (project_root / "ship.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")

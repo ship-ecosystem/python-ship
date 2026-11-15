@@ -98,7 +98,7 @@ class DjangoAdapter:
         return {"manage": ["python", "manage.py"]}
 
     def release_commands(self, config: ShipConfig) -> list[list[str]]:
-        return [["python", "manage.py", "migrate", "--noinput"]]
+        return []
 
     def production_startup_commands(self, config: ShipConfig) -> list[list[str]]:
         commands = [["python", "manage.py", "check", "--deploy"]]

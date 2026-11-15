@@ -5,6 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -19,6 +20,7 @@ from .compose import build_compose, selected_services, write_compose
 from .config import ConfigError, ShipConfig
 from .plugins import load_extensions
 from .production import credential_problems, read_env
+from .release import assemble_release, plan_images
 from .mutagen import enabled as mutagen_enabled, start as start_mutagen, stop as stop_mutagen
 from .runtime import _records, _status, wait_for_stack
 from .uv import UV_VERSION, require_uv
@@ -29,7 +31,13 @@ DOCKERIGNORE = (
     "**/.env\n**/.env.*\n**/.venv\n**/__pycache__\n"
     "**/*.pem\n**/*.key\n**/id_rsa\n**/id_ed25519\nsecrets/\n"
     "node_modules/\n**/node_modules/\nstaticfiles/\n"
+    ".npmrc\n**/.npmrc\nauth.json\n**/auth.json\n"
     ".git\ndist/\nship/compose.generated.json\nship/compose.production.json\n"
+)
+RELEASE_IGNORE_GUARD = (
+    "# python-ship release guard\n"
+    ".env\n.env.*\n**/.env\n**/.env.*\n"
+    "dist/ship/\n.npmrc\n**/.npmrc\nauth.json\n**/auth.json\n"
 )
 
 ASSET_STAGE = """FROM node:24.18.0-alpine3.24 AS assets
@@ -116,6 +124,12 @@ def build_command() -> int:
     return _execute("build")
 
 
+@app.command("release")
+def release_command(tag: Annotated[str | None, typer.Option("--tag", help="Docker image and artifact tag")] = None) -> int:
+    """Build a portable Docker-only production release."""
+    return _execute("release", tag=tag)
+
+
 @app.command("doctor")
 def doctor_command() -> int:
     """Report project versions and live container health."""
@@ -188,6 +202,20 @@ def _ensure_dockerignore(root: Path) -> None:
             if existing and not existing.endswith("\n"):
                 stream.write("\n")
             stream.write("\n".join(missing) + "\n")
+    current = path.read_text(encoding="utf-8")
+    if not current.endswith(RELEASE_IGNORE_GUARD):
+        current = current.replace(RELEASE_IGNORE_GUARD, "")
+        path.write_text(current.rstrip("\n") + "\n" + RELEASE_IGNORE_GUARD, encoding="utf-8")
+
+
+def _ensure_gitignore(root: Path) -> None:
+    path = root / ".gitignore"
+    current = path.read_text(encoding="utf-8") if path.is_file() else ""
+    if "dist/ship/" not in current.splitlines():
+        with path.open("a", encoding="utf-8") as stream:
+            if current and not current.endswith("\n"):
+                stream.write("\n")
+            stream.write("dist/ship/\n")
 
 
 def _init(root: Path, args: SimpleNamespace) -> int:
@@ -220,6 +248,7 @@ def _init(root: Path, args: SimpleNamespace) -> int:
         dict(existing.processes) if existing else {},
         existing.django_collectstatic if existing else False,
         args.node_assets or (existing.node_assets if existing else False),
+        list(existing.deploy_commands) if existing else [],
     )
     # Validate the complete model before writing any project files.
     build_compose(config, root)
@@ -260,6 +289,7 @@ def _init(root: Path, args: SimpleNamespace) -> int:
                 )
     config.write(root)
     _ensure_dockerignore(root)
+    _ensure_gitignore(root)
     print("Updated ship.json and kept the existing Dockerfile." if existing and not published else
           "Created ship.json and ship/Dockerfile. Run `ship up` to start the stack.")
     return 0
@@ -386,6 +416,33 @@ def _config_problems(root: Path) -> list[str]:
     return problems
 
 
+def _build_production(root: Path, config: ShipConfig, tag: str) -> tuple[dict, list[dict]]:
+    problem = _production_stub_problem(root)
+    if problem:
+        raise ConfigError(problem)
+    model = build_compose(config, root, production=True)
+    problems = credential_problems(model, root)
+    problems.extend(_asset_problems(root, config))
+    if problems:
+        raise ConfigError(" ".join(problems))
+    if shutil.which("docker") is None:
+        raise ConfigError("Docker is required for production builds.")
+    _ensure_dockerignore(root)
+    _ensure_gitignore(root)
+    planned, images = plan_images(model, tag)
+    path = write_compose(config, root, production=True, model=planned)
+    prefix = ["docker", "compose", "--project-directory", str(root)]
+    env_file = root / ".env.production"
+    if env_file.is_file():
+        prefix += ["--env-file", str(env_file)]
+    command = prefix + ["-f", str(path), "build", *(image["owner"] for image in images)]
+    environment = {**os.environ, **read_env(env_file)}
+    result = subprocess.run(command, cwd=root, env=environment, check=False)
+    if result.returncode != 0:
+        raise ConfigError("Building one or more production images failed; see Docker output above.")
+    return planned, images
+
+
 def _run(root: Path, args: SimpleNamespace) -> int:
     if args.command == "init":
         return _init(root, args)
@@ -424,27 +481,26 @@ def _run(root: Path, args: SimpleNamespace) -> int:
         return 0
     if args.command == "build":
         config = ShipConfig.read(root)
-        problem = _production_stub_problem(root)
-        if problem:
-            raise ConfigError(problem)
-        model = build_compose(config, root, production=True)
-        problems = credential_problems(model, root)
-        problems.extend(_asset_problems(root, config))
-        if problems:
-            raise ConfigError(" ".join(problems))
-        if shutil.which("docker") is None:
-            raise ConfigError("Docker is required for `ship build`.")
-        _ensure_dockerignore(root)
-        path = write_compose(config, root, production=True)
-        prefix = ["docker", "compose", "--project-directory", str(root)]
-        env_file = root / ".env.production"
-        if env_file.is_file():
-            prefix += ["--env-file", str(env_file)]
-        build_services = [name for name, service in model["services"].items() if "build" in service]
-        command = prefix + ["-f", str(path), "build", *build_services]
-        environment = {**os.environ, **read_env(env_file)}
-        result = subprocess.run(command, cwd=root, env=environment, check=False)
-        return result.returncode
+        _build_production(root, config, "local")
+        return 0
+    if args.command == "release":
+        tag = args.tag
+        if tag is None:
+            if not sys.stdin.isatty():
+                raise ConfigError("ship release requires --tag in a non-interactive session.")
+            try:
+                tag = input("Release tag: ").strip()
+            except EOFError as exc:
+                raise ConfigError("ship release needs a tag; no input was received.") from exc
+        if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}", tag):
+            raise ConfigError("Invalid release tag; use letters, digits, _, . or -, starting with a letter, digit or _.")
+        config = ShipConfig.read(root)
+        if not (root / ".env.production").is_file():
+            raise ConfigError("ship release requires .env.production, even when no selected service needs credentials.")
+        model, _ = _build_production(root, config, tag)
+        destination = assemble_release(root, config, model, tag)
+        print(f"Release ready at {destination}")
+        return 0
     if args.command == "doctor":
         problems = _config_problems(root)
         for problem in problems:

@@ -229,21 +229,36 @@ deduplication and portable releases.
 
 ## 7. Produce portable releases
 
-- [ ] Implement `ship build` to build and tag each project-owned production
+- [x] Implement `ship build` to build and tag each project-owned production
   image, deduplicating identical builds.
-- [ ] Implement `ship release --tag` with a validated tag and deterministic
+- [x] Implement `ship release --tag` with a validated tag and deterministic
   `dist/ship/<tag>/` layout: production Compose file without `build:`, image
   archives, release manifest, and deployment instructions.
-- [ ] Package the production environment safely, exclude secrets and previous
+- [x] Package the production environment safely, exclude secrets and previous
   releases from image build contexts, and restrict release-file permissions
   where the platform supports them.
-- [ ] Run deployment commands once per deploy in an app image, after required
+- [x] Run deployment commands once per deploy in an app image, after required
   infrastructure starts; stop on the first failure. Include migrations only
   when the project explicitly requests them.
 - [ ] Boot a release on a clean machine or CI environment using Docker alone,
   load its images, run its deploy commands, and assert HTTP/database behavior.
-- [ ] Test failure and recovery for a crashed app container and a missing
+- [x] Test failure and recovery for a crashed app container and a missing
   production credential.
+
+Phase 7 progress: `ship build` groups identical build definitions under one
+image tag. `ship release --tag` packages a runtime-only Compose file, private
+production environment, manifest, deployment instructions, and deduplicated
+archives for both project-owned and selected infrastructure images. A deploy
+script runs only explicitly configured commands after infrastructure is
+healthy and stops on the first failure; Django migrations are no longer
+implicit. Secret and prior-release ignores are reapplied before builds, and
+artifact permissions are restricted on POSIX. A release was copied to a
+source-free directory; its app image tag was removed and loaded from the
+archive, then Docker alone started PostgreSQL, ran the deploy command, served
+an HTTP response backed by the database, restarted, and recovered from a
+forced app crash. Missing credentials failed before Docker. A fresh CI runner
+or separate Docker daemon has not yet repeated this boot check, so that
+verification checkbox remains open alongside the deferred platform CI work.
 
 ## 8. Prove the community extension model
 

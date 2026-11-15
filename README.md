@@ -145,6 +145,34 @@ the production image, run `ship init --node-assets` and provide a
 set `node_assets` in `ship.json` and run `ship init --force` to refresh the
 Dockerfile.
 
+## Portable releases
+
+Run `ship release --tag 1.2.0` to build and package a release under
+`dist/ship/1.2.0/`. A release requires `.env.production` even for a project
+without selected credentialed services. The folder contains
+`docker-compose.yml` without `build:`, a private `.env`, `release.json`,
+deployment instructions, and one `images/*.tar` per unique image, including
+selected infrastructure images. The build plan groups services with identical
+build definitions under one tag and archive. The release includes no project
+source outside the images and needs Docker alone on the target machine.
+
+From the release folder, load each archive with `docker load -i images/NAME.tar`.
+If `ship.json` has `deploy_commands`, run `sh deploy-commands.sh` before
+`docker compose up -d`. The script starts infrastructure, waits for it, and
+runs each listed command once in a temporary app container. It stops at the
+first failure. For example, Django migrations are opt-in:
+
+```json
+"deploy_commands": [["python", "manage.py", "migrate", "--noinput"]]
+```
+
+Container restarts do not rerun these commands. The generated README in each
+release lists the exact image-loading and startup commands. On POSIX systems,
+Ship makes the release directory owner-only and `.env` mode `0600`; on Windows,
+restrict access with filesystem ACLs before sharing it. `ship init` adds
+`dist/ship/` to `.gitignore`, and `ship build` and `ship release` enforce
+secret and prior-release exclusions in `.dockerignore`.
+
 Running `ship init` again preserves the existing selections, extensions, and
 Dockerfile. Ship records the version of its published Dockerfile and warns when
 it differs from the installed package. Use `ship init --force` to refresh that

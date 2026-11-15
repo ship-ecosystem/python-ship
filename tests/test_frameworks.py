@@ -47,7 +47,7 @@ class FrameworkContractTests(unittest.TestCase):
                 self.assertEqual(adapter.development_command(config), compose["services"]["app"]["command"])
                 self.assertTrue(adapter.production_command(config))
                 self.assertEqual([], adapter.validate(config, FIXTURES / fixture))
-        self.assertEqual([["python", "manage.py", "migrate", "--noinput"]], DjangoAdapter().release_commands(ShipConfig("django", "project.asgi:application")))
+        self.assertEqual([], DjangoAdapter().release_commands(ShipConfig("django", "project.asgi:application")))
         self.assertEqual([], FastAPIAdapter().release_commands(ShipConfig("fastapi", "main:app")))
         self.assertEqual([], GenericAdapter().release_commands(ShipConfig("generic", "main:app")))
 

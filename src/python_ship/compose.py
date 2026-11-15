@@ -313,8 +313,8 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
     return compose
 
 
-def write_compose(config: ShipConfig, project_root: Path, *, production: bool = False) -> Path:
-    model = build_compose(config, project_root, production=production)
+def write_compose(config: ShipConfig, project_root: Path, *, production: bool = False, model: dict | None = None) -> Path:
+    model = build_compose(config, project_root, production=production) if model is None else model
     destination = project_root / "ship" / ("compose.production.json" if production else "compose.generated.json")
     destination.parent.mkdir(exist_ok=True)
     destination.write_text(json.dumps(model, indent=2) + "\n", encoding="utf-8")

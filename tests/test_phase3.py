@@ -198,7 +198,7 @@ class PhaseThreeTests(unittest.TestCase):
         def run(command, **kwargs):
             calls.append((command, kwargs))
             return subprocess.CompletedProcess(command, 0)
-        with patch("python_ship.cli.shutil.which", return_value="/usr/bin/docker"), patch("python_ship.cli.subprocess.run", side_effect=run), patch("python_ship.cli.wait_for_stack"):
+        with patch("python_ship.cli.shutil.which", side_effect=lambda name: "/usr/bin/docker" if name == "docker" else None), patch("python_ship.cli.subprocess.run", side_effect=run), patch("python_ship.cli.wait_for_stack"):
             for arguments in (["up"], ["logs"], ["exec", "app", "python", "--version"], ["db"], ["shell"], ["down"]):
                 self.assertEqual(0, main(["--project-directory", str(self.root), *arguments]))
         for command, kwargs in calls:

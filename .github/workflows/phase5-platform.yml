@@ -1,0 +1,28 @@
+name: Phase 5 platforms
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  uv-installer:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install package
+        run: python -m pip install -e .
+      - name: Run platform tests and real uv installer
+        env:
+          SHIP_UV_INSTALL_TEST: '1'
+        run: python -m unittest tests.test_phase5 tests.test_mutagen_phase5 -v

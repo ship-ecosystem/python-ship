@@ -93,6 +93,13 @@ ship exec app python -m alembic upgrade head
 JSON files. Project code is bind mounted for development, and port 8000 binds
 to localhost by default. Set `SHIP_APP_PORT` in the project `.env` to choose a
 different localhost port, especially when running two Ship projects at once.
+On macOS or Windows, install the [Mutagen CLI](https://mutagen.io/documentation/introduction/installation/)
+and set `SHIP_MUTAGEN=1` in the host shell when running `ship up` to synchronize
+source through Mutagen instead of a Docker bind mount. Ship waits for the first
+sync before reporting startup, and `ship down` terminates that project's sync
+session. The app image installs Python dependencies during build, before sync;
+local virtual environments, caches, build output, `.env` files, and VCS
+directories are excluded from synchronization.
 Compose scopes networks and named volumes by project name; set a distinct
 `name` in each `ship.json` if the directory names would collide. A project
 `.env` is loaded into the app container when present.

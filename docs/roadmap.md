@@ -154,7 +154,7 @@ image tags are documented and all catalog services have live Docker checks.
   losing Ship's supplied server when uv syncs the environment.
 - [x] Handle host UID/GID in development so container-generated files are
   usable on Linux; define the equivalent behavior for Windows and macOS.
-- [ ] Add optional Mutagen sync for slow bind mounts on Windows/macOS; exclude
+- [x] Add optional Mutagen sync for slow bind mounts on Windows/macOS; exclude
   platform-specific environments and avoid dependency-install races.
 - [x] Verify two Ship projects can run at once without network, volume, or
   port collisions; explain how users choose alternate host ports.
@@ -167,7 +167,10 @@ PHP Ship's model, the cross-platform CLI has a host language runtime while
 the application runs in Docker. The official uv installer passed an isolated
 Linux install and executable check; consent, decline, already-installed, and failure paths
 also have unit coverage. Windows and macOS installer runs still need platform
-checks. Four dependency modes passed a real app-image check, including an
+checks. The repository now has a Linux/macOS/Windows CI matrix for the real
+installer in an isolated home; its macOS and Windows runs are pending until
+the repository has a GitHub remote and the workflow is executed. Four
+dependency modes passed a real app-image check, including an
 installable project both with and without `uv.lock`; `ship uv` now runs in an
 isolated Docker image with the selected Python version, and `ship up` rebuilds
 the app image. A live `ship uv add` also updated the lockfile without creating
@@ -176,9 +179,13 @@ container-generated files retained the
 host UID/GID. Docker Desktop uses its own bind-mount ownership behavior on
 macOS and Windows. Two concurrent stacks passed port, network, and Redis data
 isolation checks. `ship doctor` reports selected service images and container
-health. Optional Mutagen sync remains to be implemented and verified. Mutagen
-Compose is deprecated, so this needs a current synchronization path rather
-than relying on its old Compose wrapper.
+health. Optional direct Mutagen sync passed a live Docker check: the app
+started from its built image, host code edits reached the container and
+triggered Uvicorn reload, no host `.venv` appeared, and `ship down` removed
+the project-scoped session. The source sync omits platform-specific
+environments, build output, caches, VCS directories, and `.env` files. Its
+startup waits for an initial sync flush after the image has installed app
+dependencies.
 
 ## 6. Build a production image and production config
 

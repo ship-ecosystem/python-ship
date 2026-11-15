@@ -16,6 +16,7 @@ from . import __version__
 from .compose import build_compose, selected_services, write_compose
 from .config import ConfigError, ShipConfig
 from .plugins import load_extensions
+from .mutagen import enabled as mutagen_enabled, start as start_mutagen, stop as stop_mutagen
 from .runtime import _records, _status, wait_for_stack
 from .uv import UV_VERSION, require_uv
 
@@ -396,8 +397,11 @@ def _run(root: Path, args: SimpleNamespace) -> int:
             typer.echo(f"ship: warning: {warning}", err=True)
     prefix = _compose_prefix(root, config)
     if args.command == "up":
+        # Terminate any session from a prior container before Compose recreates it.
+        stop_mutagen(root, required=mutagen_enabled())
         command = prefix + ["up", "--build", "-d"]
     elif args.command == "down":
+        stop_mutagen(root, required=mutagen_enabled())
         command = prefix + ["down"] + (["--volumes"] if args.volumes else [])
     elif args.command == "logs":
         command = prefix + ["logs"] + (["--follow"] if args.follow else []) + ([args.service] if args.service else [])
@@ -437,6 +441,12 @@ def _run(root: Path, args: SimpleNamespace) -> int:
         raise ConfigError(f"Unknown command {args.command!r}.")
     result = subprocess.run(command, cwd=root, check=False)
     if args.command == "up" and result.returncode == 0:
+        if mutagen_enabled():
+            try:
+                start_mutagen(prefix, root)
+            except ConfigError:
+                subprocess.run(prefix + ["down"], cwd=root, check=False)
+                raise
         wait_for_stack(prefix, set(build_compose(config, root)["services"]))
         print("Ship stack is running and the app port is reachable.")
     return result.returncode

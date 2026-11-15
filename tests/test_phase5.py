@@ -16,6 +16,7 @@ from python_ship import __version__
 from python_ship.cli import main
 from python_ship.compose import build_compose
 from python_ship.config import ShipConfig
+from python_ship.config import ConfigError
 from python_ship.uv import UV_VERSION, require_uv
 
 
@@ -78,17 +79,30 @@ class PhaseFiveTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "was not found"):
                 require_uv()
 
-    @unittest.skipUnless(os.environ.get("SHIP_UV_INSTALL_TEST") == "1" and os.name != "nt", "set SHIP_UV_INSTALL_TEST=1 for the real Unix installer")
+    @unittest.skipUnless(os.environ.get("SHIP_UV_INSTALL_TEST") == "1", "set SHIP_UV_INSTALL_TEST=1 for the real platform installer")
     def test_official_uv_installer_in_isolated_home(self):
         with tempfile.TemporaryDirectory(prefix="ship-uv-installer-") as home:
-            with patch.dict(os.environ, {"HOME": home, "UV_NO_MODIFY_PATH": "1"}), patch(
-                "python_ship.uv.shutil.which", return_value=None
-            ), patch("builtins.input", return_value="yes"):
+            original_which = shutil.which
+            with patch.dict(os.environ, {"HOME": home, "USERPROFILE": home, "UV_NO_MODIFY_PATH": "1"}), patch(
+                "python_ship.uv.Path.home", return_value=Path(home)
+            ), patch("python_ship.uv.shutil.which", side_effect=lambda name: None if name == "uv" else original_which(name)), patch("builtins.input", return_value="yes"):
                 executable = require_uv()
-            self.assertEqual(str(Path(home) / ".local" / "bin" / "uv"), executable)
+            self.assertEqual(str(Path(home) / ".local" / "bin" / ("uv.exe" if os.name == "nt" else "uv")), executable)
             result = subprocess.run([executable, "--version"], capture_output=True, text=True)
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertIn("uv ", result.stdout)
+
+    def test_init_uv_decline_and_installer_failure_leave_project_untouched(self):
+        for outcome in ("decline", "failure"):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory(prefix="ship-uv-block-") as directory:
+                root = Path(directory)
+                (root / "main.py").write_text("async def app(scope, receive, send): pass\n")
+                with patch("python_ship.uv.locate_uv", return_value=None), patch(
+                    "builtins.input", return_value="no" if outcome == "decline" else "yes"
+                ), patch("python_ship.uv._install_uv", side_effect=ConfigError("installer failed")) as installer, redirect_stderr(StringIO()):
+                    self.assertEqual(1, main(["--project-directory", str(root), "init", "--app", "main:app"]))
+                self.assertEqual(outcome == "failure", installer.called)
+                self.assertEqual(["main.py"], sorted(path.name for path in root.iterdir()))
 
     @unittest.skipUnless(os.environ.get("SHIP_CLI_BOOTSTRAP_TEST") == "1", "set SHIP_CLI_BOOTSTRAP_TEST=1 for isolated CLI installation")
     def test_cli_installs_with_uv_managed_python_only(self):

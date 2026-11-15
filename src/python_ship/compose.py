@@ -9,6 +9,7 @@ import sys
 
 from .config import ConfigError, ShipConfig
 from .plugins import load_extensions, load_servers
+from .mutagen import enabled as mutagen_enabled
 
 
 def selected_services(config: ShipConfig, services: dict) -> list[tuple[str, object, dict[str, str]]]:
@@ -194,9 +195,10 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
         "restart": "unless-stopped",
     }
     if not production:
-        app["volumes"] = [".:/app"]
+        if not mutagen_enabled():
+            app["volumes"] = [".:/app"]
         app["ports"] = ["127.0.0.1:${SHIP_APP_PORT:-8000}:8000"]
-        if sys.platform.startswith("linux") and hasattr(os, "getuid"):
+        if not mutagen_enabled() and sys.platform.startswith("linux") and hasattr(os, "getuid"):
             app["user"] = f"{os.getuid()}:{os.getgid()}"
     compose = {"name": name, "services": {"app": app}}
     volumes = {}

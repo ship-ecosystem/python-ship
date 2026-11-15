@@ -22,7 +22,9 @@ jobs:
           python-version: '3.13'
       - name: Install package
         run: python -m pip install -e .
-      - name: Run platform tests and real uv installer
+      - name: Run platform unit tests
+        run: python scripts/run_ci_test.py tests.test_phase5 tests.test_mutagen_phase5 -v
+      - name: Run real uv installer test
         env:
           SHIP_UV_INSTALL_TEST: '1'
-        run: python -m unittest tests.test_phase5 tests.test_mutagen_phase5 -v
+        run: python scripts/run_ci_test.py tests.test_phase5.PhaseFiveTests.test_official_uv_installer_in_isolated_home -v

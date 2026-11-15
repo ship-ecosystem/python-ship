@@ -32,6 +32,7 @@ class PlainAsgiHttpTests(unittest.TestCase):
         self.assertEqual(200, events[0]["status"])
         self.assertEqual(b"hello from plain ASGI", events[1]["body"])
 
+    @unittest.skipUnless(importlib.util.find_spec("uvicorn") is not None, "Uvicorn is supplied in the Docker app image")
     def test_plain_asgi_http_response(self):
         try:
             with socket.socket() as probe:

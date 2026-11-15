@@ -8,7 +8,16 @@ a separate contract.
 
 ## Install
 
-From this checkout, install into a Python 3.11+ virtual environment:
+The standalone uv executable does not require a preinstalled Python. From
+this checkout, uv can install the Ship CLI with an isolated Python that it
+manages:
+
+```sh
+uv tool install --python 3.13 .
+```
+
+For package development with an existing Python 3.11+ environment, you can
+also use:
 
 ```sh
 python -m pip install -e .
@@ -47,9 +56,8 @@ ship up
 ```
 
 The default adapter is `generic`; Ship installs Uvicorn in the container and
-uses it to serve the app. Installing `python-ship` also installs Uvicorn in the
-host Python environment used by the CLI. The app can declare its own
-dependencies separately when needed.
+uses it to serve the app. The app can declare its own dependencies separately
+when needed.
 
 In an existing Django project with `manage.py` and `project/asgi.py`:
 
@@ -106,11 +114,14 @@ their own dependencies. Ship supplies Uvicorn by default; the Dockerfile uses `u
 when present, otherwise installs `requirements.txt` or the project from
 `pyproject.toml` using uv. A plain ASGI app can have none of these files.
 
-Use `ship uv add PACKAGE`, `ship uv lock`, or other `ship uv` arguments to run
-uv in the host project directory. This edits the project's `pyproject.toml`
-and `uv.lock` without syncing Ship's container environment, so an exact uv
-sync cannot remove Ship's supplied ASGI server. Run `ship up` afterward to
-rebuild the app image with changed dependencies. A locked uv project uses
+Use `ship uv add PACKAGE`, `ship uv lock`, or other dependency metadata commands
+to run uv and the selected Python version in a temporary Docker container.
+Ship bind mounts the source project so `pyproject.toml` and `uv.lock` edits
+remain on the host, while the temporary Python environment stays inside the
+container. Dependency resolution uses neither host Python nor host uv.
+`ship uv sync`, `run`, `pip`, `python`, and `tool` are rejected because their
+environment changes would be discarded with the temporary container. Run
+`ship up` to rebuild the app image with changed dependencies. A locked uv project uses
 `uv sync --locked --no-dev`; an unlocked `pyproject.toml` uses
 `uv sync --no-dev`; `requirements.txt` uses `uv pip install -r`. An installable
 project is installed by uv, while a project without dependencies can omit all

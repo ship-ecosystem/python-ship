@@ -5,6 +5,7 @@ from io import StringIO
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -15,7 +16,7 @@ from python_ship import __version__
 from python_ship.cli import main
 from python_ship.compose import build_compose
 from python_ship.config import ShipConfig
-from python_ship.uv import require_uv
+from python_ship.uv import UV_VERSION, require_uv
 
 
 class PhaseFiveTests(unittest.TestCase):
@@ -27,20 +28,30 @@ class PhaseFiveTests(unittest.TestCase):
         with patch("python_ship.cli.require_uv", return_value="/fake/uv"):
             self.assertEqual(0, main(["--project-directory", str(self.root), "init", "--app", "main:app"]))
 
-    def test_ship_uv_runs_in_host_project_and_forwards_arguments(self):
-        with patch("python_ship.cli.locate_uv", return_value="/path/to/uv"), patch(
+    def test_ship_uv_uses_isolated_container_and_forwards_arguments(self):
+        with patch("python_ship.cli.shutil.which", return_value="/usr/bin/docker"), patch(
             "python_ship.cli.subprocess.run", return_value=subprocess.CompletedProcess([], 23)
         ) as run:
             self.assertEqual(23, main(["--project-directory", str(self.root), "uv", "add", "httpx", "--dev"]))
-        run.assert_called_once_with(["/path/to/uv", "add", "httpx", "--dev"], cwd=self.root, check=False)
+        command = run.call_args.args[0]
+        self.assertEqual(["docker", "run", "--rm", "--interactive"], command[:4])
+        self.assertEqual(["uv", "add", "httpx", "--dev"], command[-4:])
+        self.assertIn(f"{self.root}:/app", command)
+        self.assertIn(f"ghcr.io/astral-sh/uv:{UV_VERSION}-python3.13-trixie-slim", command)
+        self.assertIn("UV_NO_SYNC=1", command)
+        self.assertIn("UV_PROJECT_ENVIRONMENT=/tmp/ship-uv-venv", command)
+        self.assertEqual(self.root, run.call_args.kwargs["cwd"])
 
-    def test_ship_uv_explains_missing_binary_and_arguments(self):
-        with patch("python_ship.cli.locate_uv", return_value=None), redirect_stderr(StringIO()) as errors:
+    def test_ship_uv_explains_missing_docker_and_unsafe_commands(self):
+        with patch("python_ship.cli.shutil.which", return_value=None), redirect_stderr(StringIO()) as errors:
             self.assertEqual(1, main(["--project-directory", str(self.root), "uv", "lock"]))
-        self.assertIn("uv is required", errors.getvalue())
-        with patch("python_ship.cli.locate_uv", return_value="/path/to/uv"), redirect_stderr(StringIO()) as errors:
+        self.assertIn("Docker is required", errors.getvalue())
+        with redirect_stderr(StringIO()) as errors:
             self.assertEqual(1, main(["--project-directory", str(self.root), "uv"]))
         self.assertIn("requires uv arguments", errors.getvalue())
+        with redirect_stderr(StringIO()) as errors:
+            self.assertEqual(1, main(["--project-directory", str(self.root), "uv", "sync"]))
+        self.assertIn("ship up", errors.getvalue())
 
     def test_linux_development_user_matches_host(self):
         model = build_compose(ShipConfig("generic", "main:app"), self.root)
@@ -78,6 +89,31 @@ class PhaseFiveTests(unittest.TestCase):
             result = subprocess.run([executable, "--version"], capture_output=True, text=True)
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertIn("uv ", result.stdout)
+
+    @unittest.skipUnless(os.environ.get("SHIP_CLI_BOOTSTRAP_TEST") == "1", "set SHIP_CLI_BOOTSTRAP_TEST=1 for isolated CLI installation")
+    def test_cli_installs_with_uv_managed_python_only(self):
+        uv = shutil.which("uv")
+        self.assertIsNotNone(uv)
+        with tempfile.TemporaryDirectory(prefix="ship-cli-bootstrap-") as home:
+            base = Path(home)
+            environment = {
+                **os.environ,
+                "HOME": home,
+                "UV_PYTHON_PREFERENCE": "only-managed",
+                "UV_PYTHON_INSTALL_DIR": str(base / "python"),
+                "UV_TOOL_DIR": str(base / "tools"),
+                "UV_TOOL_BIN_DIR": str(base / "bin"),
+                "UV_CACHE_DIR": str(base / "cache"),
+                "UV_NO_PROGRESS": "1",
+            }
+            repository = Path(__file__).parents[1]
+            installed = subprocess.run([uv, "tool", "install", "--python", "3.13", "."], cwd=repository, env=environment, capture_output=True, text=True)
+            self.assertEqual(0, installed.returncode, installed.stderr)
+            self.assertTrue(any((base / "python").iterdir()))
+            executable = base / "bin" / ("ship.exe" if os.name == "nt" else "ship")
+            result = subprocess.run([str(executable), "--help"], env=environment, capture_output=True, text=True)
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertIn("config:test", result.stdout)
 
     def test_doctor_reports_versions_and_crashed_containers(self):
         crashed = json.dumps({"Service": "app", "State": "exited", "ExitCode": 3, "Publishers": []})

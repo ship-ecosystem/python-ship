@@ -274,6 +274,10 @@ class ServiceCatalogDockerTests(unittest.TestCase):
         self.assertTrue((self.root / "uv.lock").is_file())
         self.assertEqual(0, self._ship("up"))
         self.assertEqual(0, self._ship("exec", "app", "python", "-c", check))
+        self.assertEqual(0, self._ship("uv", "add", "h11==0.16.0"))
+        self.assertFalse((self.root / ".venv").exists())
+        self.assertEqual(0, self._ship("up"))
+        self.assertEqual(0, self._ship("exec", "app", "python", "-c", check + "; import h11"))
 
     def _storage_object_round_trip(self, choice, *options):
         (self.root / "requirements.txt").write_text("boto3>=1.35,<2\n")

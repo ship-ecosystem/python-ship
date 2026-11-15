@@ -17,7 +17,7 @@ from .compose import build_compose, selected_services, write_compose
 from .config import ConfigError, ShipConfig
 from .plugins import load_extensions
 from .runtime import _records, _status, wait_for_stack
-from .uv import UV_VERSION, locate_uv, require_uv
+from .uv import UV_VERSION, require_uv
 
 
 DOCKERIGNORE = (
@@ -152,7 +152,7 @@ def npm_command(ctx: typer.Context) -> int:
 
 @app.command("uv", context_settings=PROXY_CONTEXT)
 def uv_command(ctx: typer.Context) -> int:
-    """Run uv on the host project; rebuild with `ship up` to apply changes in Docker."""
+    """Run project dependency commands in an isolated uv and Python container."""
     return _execute("uv", args=_proxy_tail("uv", 1))
 
 
@@ -318,14 +318,27 @@ def _run(root: Path, args: SimpleNamespace) -> int:
     if args.command == "init":
         return _init(root, args)
     if args.command == "uv":
-        if not (root / "ship.json").is_file():
-            raise ConfigError("No ship.json found; run `ship init` first.")
-        executable = locate_uv()
-        if executable is None:
-            raise ConfigError("uv is required; run `ship init` to install it or install uv yourself.")
+        config = ShipConfig.read(root)
         if not args.args:
             raise ConfigError("ship uv requires uv arguments, such as `ship uv add httpx` or `ship uv lock`.")
-        return subprocess.run([executable, *args.args], cwd=root, check=False).returncode
+        if args.args[0] in {"sync", "run", "pip", "python", "tool"}:
+            raise ConfigError("ship uv runs dependency metadata commands in a temporary container. Use `ship up` to install dependencies in the app image, or `ship exec app` to run app commands.")
+        if shutil.which("docker") is None:
+            raise ConfigError("Docker is required for `ship uv`.")
+        image = f"ghcr.io/astral-sh/uv:{UV_VERSION}-python{config.python}-trixie-slim"
+        command = [
+            "docker", "run", "--rm", "--interactive",
+            "--volume", f"{root.resolve()}:/app", "--workdir", "/app",
+            "--env", "HOME=/tmp", "--env", "UV_CACHE_DIR=/tmp/ship-uv-cache",
+            "--env", "UV_PROJECT_ENVIRONMENT=/tmp/ship-uv-venv",
+            "--env", "UV_NO_SYNC=1", "--env", f"UV_PYTHON=python{config.python}",
+        ]
+        if sys.platform.startswith("linux") and hasattr(os, "getuid"):
+            command += ["--user", f"{os.getuid()}:{os.getgid()}"]
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            command.append("--tty")
+        command += [image, "uv", *args.args]
+        return subprocess.run(command, cwd=root, check=False).returncode
     if args.command == "config:test":
         problems = _config_problems(root)
         for problem in problems:

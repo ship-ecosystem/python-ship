@@ -147,6 +147,8 @@ image tags are documented and all catalog services have live Docker checks.
 - [ ] Test the actual uv installer accept, decline, install-failure, and
   already-installed paths on Linux, macOS, and Windows; verify its executable
   remains discoverable after installation.
+- [ ] Provide a standalone Ship CLI distribution for hosts that must not run
+  even an isolated uv-managed Python; verify it on Linux, macOS, and Windows.
 - [x] Use uv correctly for a locked `uv` project, a `requirements.txt` project,
   an installable `pyproject.toml` project, and a dependency-free app; verify
   generated image behavior, not only Dockerfile text.
@@ -161,12 +163,18 @@ image tags are documented and all catalog services have live Docker checks.
 - [x] Add service/version/stub diagnostics and clear recovery messages for
   crashed or unhealthy containers.
 
-Phase 5 progress: the official uv installer passed an isolated Linux install
+Phase 5 progress: an isolated `uv tool install` passed with only uv-managed
+Python, so a preinstalled system Python is unnecessary for the CLI. A strictly
+zero-Python host still needs the standalone CLI distribution above. The
+official uv installer passed an isolated Linux install
 and executable check; consent, decline, already-installed, and failure paths
 also have unit coverage. Windows and macOS installer runs still need platform
 checks. Four dependency modes passed a real app-image check, including an
-installable project both with and without `uv.lock`; `ship uv` runs on the host
-and `ship up` rebuilds the image. Linux container-generated files retained the
+installable project both with and without `uv.lock`; `ship uv` now runs in an
+isolated Docker image with the selected Python version, and `ship up` rebuilds
+the app image. A live `ship uv add` also updated the lockfile without creating
+a host `.venv` or removing Uvicorn from the rebuilt app. Linux
+container-generated files retained the
 host UID/GID. Docker Desktop uses its own bind-mount ownership behavior on
 macOS and Windows. Two concurrent stacks passed port, network, and Redis data
 isolation checks. `ship doctor` reports selected service images and container

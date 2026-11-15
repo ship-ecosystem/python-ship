@@ -37,6 +37,14 @@ class ServiceCatalogDockerTests(unittest.TestCase):
             f"SHIP_APP_PORT={self.app_port}\nMAILPIT_WEB_PORT={self.mailpit_port}\n"
             f"SHIP_HMR_PORT={self.hmr_port}\nSILO_CONSOLE_PORT={self.silo_port}\n"
         )
+        (self.root / ".env.production").write_text(
+            "DB_PASSWORD=fixture-production-password\n"
+            "DB_ROOT_PASSWORD=fixture-production-root-password\n"
+            "AWS_SECRET_ACCESS_KEY=fixture-production-secret\n"
+            "MEILISEARCH_KEY=fixture-production-meili-key\n"
+            "GARAGE_ADMIN_TOKEN=fixture-production-admin\n"
+            f"GARAGE_RPC_SECRET={'1' * 64}\n"
+        )
 
     @staticmethod
     def _free_port():

@@ -46,6 +46,7 @@ class PhaseThreeDockerTests(unittest.TestCase):
             }, networks={"shared": self.network},
         )
         config.write(self.root)
+        (self.root / ".env.production").write_text("DB_PASSWORD=fixture-production-password\n")
         (self.root / "compose.override.yaml").write_text("services:\n  app:\n    environment:\n      OVERRIDE_TEST: present\n")
         created = subprocess.run(["docker", "network", "create", self.network], capture_output=True, text=True)
         self.assertEqual(0, created.returncode, created.stderr)

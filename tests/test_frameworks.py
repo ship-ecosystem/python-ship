@@ -90,6 +90,7 @@ class FrameworkDockerTests(unittest.TestCase):
 
     def _init_and_up(self, fixture, framework, target):
         shutil.copytree(FIXTURES / fixture, self.root, dirs_exist_ok=True)
+        (self.root / ".env.production").write_text("DB_PASSWORD=fixture-production-password\n")
         with patch("python_ship.cli.require_uv", return_value="/integration/uv"):
             self.assertEqual(0, self._run(["init", "--framework", framework, "--app", target, "--database", "postgres", "--cache", "redis"]))
         self.assertEqual(0, self._run(["config:test"]))

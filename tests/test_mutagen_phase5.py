@@ -1,6 +1,7 @@
 """Mutagen Compose integration and session lifecycle."""
 
 from contextlib import redirect_stderr
+from dataclasses import replace
 from io import StringIO
 import os
 from pathlib import Path
@@ -57,6 +58,23 @@ class MutagenTests(unittest.TestCase):
         terminate = calls[-1]
         self.assertEqual(["mutagen", "sync", "terminate", "--label-selector", _label(self.root)], terminate)
 
+    def test_named_processes_get_their_own_sync_sessions(self):
+        calls = []
+        def run(command, **kwargs):
+            calls.append(command)
+            if command[-3:-1] == ["ps", "-q"]:
+                return subprocess.CompletedProcess(command, 0, command[-1] + "-container\n", "")
+            if "list" in command:
+                return subprocess.CompletedProcess(command, 0, "Watching|true|true\nWatching|true|true\n", "")
+            return subprocess.CompletedProcess(command, 0, "", "")
+        with patch("python_ship.mutagen.shutil.which", return_value="mutagen"), patch(
+            "python_ship.mutagen.subprocess.run", side_effect=run
+        ):
+            start(["docker", "compose"], self.root, ("app", "worker"))
+        created = [command for command in calls if "create" in command]
+        self.assertEqual(2, len(created))
+        self.assertTrue(any("docker://worker-container/app" in command for command in created))
+
     def test_missing_binary_fails_before_compose_up(self):
         with patch("python_ship.cli.require_uv", return_value="uv"):
             self.assertEqual(0, main(["--project-directory", str(self.root), "init", "--app", "main:app"]))
@@ -88,6 +106,9 @@ class MutagenTests(unittest.TestCase):
             "python_ship.cli.require_uv", return_value="uv"
         ):
             self.assertEqual(0, main(["--project-directory", str(self.root), "init", "--app", "main:app"]))
+            replace(ShipConfig.read(self.root), processes={
+                "worker": ["python", "-c", "import time; time.sleep(600)"],
+            }).write(self.root)
             try:
                 self.assertEqual(0, main(["--project-directory", str(self.root), "up"]))
                 model = build_compose(ShipConfig.read(self.root), self.root)
@@ -117,6 +138,10 @@ class MutagenTests(unittest.TestCase):
                     time.sleep(1)
                 else:
                     self.fail("Mutagen edit did not reload the app")
+                worker = subprocess.run(["docker", "compose", "-f", str(compose_path), "exec", "-T", "worker",
+                                         "python", "-c", "assert 'after' in open('/app/main.py').read()"],
+                                        cwd=self.root, capture_output=True, text=True)
+                self.assertEqual(0, worker.returncode, worker.stderr)
                 self.assertTrue((self.root / ".venv" / "host-only").is_file())
             finally:
                 self.assertEqual(0, main(["--project-directory", str(self.root), "down"]))

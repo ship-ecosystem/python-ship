@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 import os
+import shlex
 import sys
 
 from .config import ConfigError, ShipConfig
@@ -188,11 +189,23 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
         raise ConfigError(f"Adapter {config.framework!r} command failed: {exc}") from exc
     if not isinstance(command, list) or not command or any(not isinstance(part, str) or not part for part in command):
         raise ConfigError(f"Adapter {config.framework!r} returned an invalid command.")
+    if production:
+        try:
+            startup = getattr(adapter, "production_startup_commands", lambda config: [])(config)
+        except Exception as exc:
+            raise ConfigError(f"Adapter {config.framework!r} production startup commands failed: {exc}") from exc
+        if not isinstance(startup, list) or any(
+            not isinstance(parts, list) or not parts or any(not isinstance(part, str) or not part for part in parts)
+            for parts in startup
+        ):
+            raise ConfigError(f"Adapter {config.framework!r} returned invalid production startup commands.")
+        if startup:
+            command = ["sh", "-c", " && ".join([*(shlex.join(parts) for parts in startup), "exec " + shlex.join(command)])]
     app = {
         "build": {"context": ".", "dockerfile": "ship/Dockerfile", "target": "production" if production else "development", "args": {"PYTHON_VERSION": config.python, "SHIP_SERVER_REQUIREMENT": server.requirement}},
         "command": command,
         "working_dir": "/app",
-        "env_file": [{"path": ".env.production", "required": True}] if production else [{"path": ".env", "required": False}],
+        "env_file": [{"path": ".env.production", "required": False}] if production else [{"path": ".env", "required": False}],
         "environment": {},
         "restart": "unless-stopped",
     }
@@ -202,6 +215,8 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
         app["ports"] = ["127.0.0.1:${SHIP_APP_PORT:-8000}:8000"]
         if not mutagen_enabled() and sys.platform.startswith("linux") and hasattr(os, "getuid"):
             app["user"] = f"{os.getuid()}:{os.getgid()}"
+    elif config.publish_ports:
+        app["ports"] = ["${SHIP_PRODUCTION_PORT:-8000}:8000"]
     compose = {"name": name, "services": {"app": app}}
     volumes = {}
     extra_networks = set()
@@ -275,6 +290,17 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
         if "ship-app.test" not in aliases:
             aliases.append("ship-app.test")
         app["networks"] = networks
+    if config.processes:
+        app_image = f"{name}-app:{'local' if production else 'development'}"
+        app["image"] = app_image
+        for process_name, command in config.processes.items():
+            if process_name in compose["services"]:
+                raise ConfigError(f"Process {process_name!r} conflicts with another Compose service.")
+            process = deepcopy(app)
+            for key in ("build", "ports", "healthcheck"):
+                process.pop(key, None)
+            process["command"] = command
+            compose["services"][process_name] = process
     if production:
         for service_name, model in compose["services"].items():
             for mount in model.get("volumes", []):
@@ -282,6 +308,8 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
                     raise ConfigError(f"Production service {service_name!r} cannot use a host bind mount.")
                 if isinstance(mount, dict) and mount.get("type") == "bind":
                     raise ConfigError(f"Production service {service_name!r} cannot use a host bind mount.")
+            if "build" in model:
+                model.setdefault("image", f"{name}-{service_name}:local")
     return compose
 
 

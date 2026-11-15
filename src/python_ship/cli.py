@@ -1,7 +1,9 @@
 """Command-line entry point."""
 
 from importlib.resources import files
+from dataclasses import replace
 from pathlib import Path
+import json
 import os
 import shutil
 import subprocess
@@ -16,6 +18,7 @@ from . import __version__
 from .compose import build_compose, selected_services, write_compose
 from .config import ConfigError, ShipConfig
 from .plugins import load_extensions
+from .production import credential_problems, read_env
 from .mutagen import enabled as mutagen_enabled, start as start_mutagen, stop as stop_mutagen
 from .runtime import _records, _status, wait_for_stack
 from .uv import UV_VERSION, require_uv
@@ -25,8 +28,18 @@ DOCKERIGNORE = (
     ".env\n.env.*\n!.env.example\n"
     "**/.env\n**/.env.*\n**/.venv\n**/__pycache__\n"
     "**/*.pem\n**/*.key\n**/id_rsa\n**/id_ed25519\nsecrets/\n"
+    "node_modules/\n**/node_modules/\nstaticfiles/\n"
     ".git\ndist/\nship/compose.generated.json\nship/compose.production.json\n"
 )
+
+ASSET_STAGE = """FROM node:24.18.0-alpine3.24 AS assets
+WORKDIR /assets
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+RUN npm run build && test -d dist && mkdir /ship-assets && cp -a dist/. /ship-assets/
+"""
+ASSET_COPY = "COPY --from=assets /ship-assets/ /app/dist/"
 
 
 app = typer.Typer(help="Docker environments for Python web apps")
@@ -82,11 +95,13 @@ def init_command(
     testing: Annotated[str | None, typer.Option(help="Browser testing service")] = None,
     frontend: Annotated[str | None, typer.Option(help="Frontend service")] = None,
     force: Annotated[bool, typer.Option(help="Refresh the published Dockerfile")] = False,
+    node_assets: Annotated[bool, typer.Option("--node-assets", help="Build npm assets into the production image")] = False,
 ) -> int:
     """Create ship.json and a project Dockerfile."""
     return _execute("init", app=app_target, framework=framework, server=server, python=python_version,
                     database=database, cache=cache, mail=mail, search=search,
-                    storage=storage, silo_image=silo_image, testing=testing, frontend=frontend, force=force)
+                    storage=storage, silo_image=silo_image, testing=testing, frontend=frontend, force=force,
+                    node_assets=node_assets)
 
 
 @app.command("config:test")
@@ -95,10 +110,10 @@ def config_test_command() -> int:
     return _execute("config:test")
 
 
-@app.command("config:production")
-def config_production_command() -> int:
-    """Write a separate production Compose model."""
-    return _execute("config:production")
+@app.command("build")
+def build_command() -> int:
+    """Build the production images and generate their Compose model."""
+    return _execute("build")
 
 
 @app.command("doctor")
@@ -201,12 +216,19 @@ def _init(root: Path, args: SimpleNamespace) -> int:
         dict(existing.networks) if existing else {},
         args.silo_image or (existing.silo_image if existing else "distroless"),
         args.server or (existing.server if existing else "uvicorn"),
+        existing.publish_ports if existing else False,
+        dict(existing.processes) if existing else {},
+        existing.django_collectstatic if existing else False,
+        args.node_assets or (existing.node_assets if existing else False),
     )
     # Validate the complete model before writing any project files.
     build_compose(config, root)
     server_stub_problem = _server_stub_problem(root, config)
     if server_stub_problem and not args.force:
         raise ConfigError(server_stub_problem)
+    asset_stub_problem = next((item for item in _asset_problems(root, config) if "refreshed ship/Dockerfile" in item), None)
+    if asset_stub_problem and dockerfile.exists() and not args.force:
+        raise ConfigError(asset_stub_problem)
     needs_garage = "garage" in config.services.values() or any(
         selection.get("service") == "garage" for selection in config.instances.values()
     )
@@ -218,7 +240,9 @@ def _init(root: Path, args: SimpleNamespace) -> int:
         dockerfile.write_text(
             files("python_ship").joinpath("templates/Dockerfile")
             .read_text(encoding="utf-8")
-            .replace("@UV_VERSION@", UV_VERSION),
+            .replace("@UV_VERSION@", UV_VERSION)
+            .replace("@ASSET_STAGE@", ASSET_STAGE if config.node_assets else "")
+            .replace("@ASSET_COPY@", ASSET_COPY if config.node_assets else ""),
             encoding="utf-8",
         )
         version_file.write_text(__version__ + "\n", encoding="utf-8")
@@ -273,6 +297,28 @@ def _production_stub_problem(root: Path) -> str | None:
     return None
 
 
+def _asset_problems(root: Path, config: ShipConfig) -> list[str]:
+    if not config.node_assets:
+        return []
+    problems = []
+    dockerfile = root / "ship" / "Dockerfile"
+    if not dockerfile.is_file() or "AS assets" not in dockerfile.read_text(encoding="utf-8"):
+        problems.append("Node assets require a refreshed ship/Dockerfile; run `ship init --force`.")
+    package = root / "package.json"
+    if not package.is_file():
+        problems.append("Node assets require package.json with a build script.")
+    else:
+        try:
+            data = json.loads(package.read_text(encoding="utf-8"))
+            if not isinstance(data, dict) or not isinstance(data.get("scripts"), dict) or not isinstance(data["scripts"].get("build"), str):
+                problems.append("Node assets require a package.json build script.")
+        except (OSError, ValueError):
+            problems.append("Node assets require a valid package.json.")
+    if not (root / "package-lock.json").is_file():
+        problems.append("Node assets require package-lock.json for npm ci.")
+    return problems
+
+
 def _garage_stub_problems(root: Path, config: ShipConfig) -> list[str]:
     selected = "garage" in config.services.values() or any(
         instance.get("service") == "garage" for instance in config.instances.values()
@@ -322,10 +368,21 @@ def _config_problems(root: Path) -> list[str]:
         if str(exc) not in problems:
             problems.append(str(exc))
     if not problems:
-        try:
-            build_compose(config, root)
-        except ConfigError as exc:
-            problems.append(str(exc))
+        for production in (False, True):
+            try:
+                model = build_compose(config, root, production=production)
+                if production:
+                    problems.extend(credential_problems(model, root))
+            except ConfigError as exc:
+                problems.append(f"{'Production' if production else 'Development'} Compose: {exc}")
+        if config.processes and any("Process " in problem and "conflicts" in problem for problem in problems):
+            # An unrelated process name collision must not hide credential errors.
+            try:
+                credential_model = build_compose(replace(config, processes={}), root, production=True)
+                problems.extend(credential_problems(credential_model, root))
+            except ConfigError:
+                pass
+    problems.extend(_asset_problems(root, config))
     return problems
 
 
@@ -363,16 +420,31 @@ def _run(root: Path, args: SimpleNamespace) -> int:
         warning = _stub_warning(root)
         if warning:
             typer.echo(f"ship: warning: {warning}", err=True)
-        print("ship.json and the development Compose model are valid.")
+        print("ship.json and both Compose models are valid.")
         return 0
-    if args.command == "config:production":
+    if args.command == "build":
         config = ShipConfig.read(root)
         problem = _production_stub_problem(root)
         if problem:
             raise ConfigError(problem)
+        model = build_compose(config, root, production=True)
+        problems = credential_problems(model, root)
+        problems.extend(_asset_problems(root, config))
+        if problems:
+            raise ConfigError(" ".join(problems))
+        if shutil.which("docker") is None:
+            raise ConfigError("Docker is required for `ship build`.")
+        _ensure_dockerignore(root)
         path = write_compose(config, root, production=True)
-        print(path)
-        return 0
+        prefix = ["docker", "compose", "--project-directory", str(root)]
+        env_file = root / ".env.production"
+        if env_file.is_file():
+            prefix += ["--env-file", str(env_file)]
+        build_services = [name for name, service in model["services"].items() if "build" in service]
+        command = prefix + ["-f", str(path), "build", *build_services]
+        environment = {**os.environ, **read_env(env_file)}
+        result = subprocess.run(command, cwd=root, env=environment, check=False)
+        return result.returncode
     if args.command == "doctor":
         problems = _config_problems(root)
         for problem in problems:
@@ -465,7 +537,7 @@ def _run(root: Path, args: SimpleNamespace) -> int:
     if args.command == "up" and result.returncode == 0:
         if mutagen_enabled():
             try:
-                start_mutagen(prefix, root)
+                start_mutagen(prefix, root, ("app", *config.processes))
             except ConfigError:
                 subprocess.run(prefix + ["down"], cwd=root, check=False)
                 raise

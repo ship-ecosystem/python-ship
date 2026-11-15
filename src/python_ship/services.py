@@ -32,15 +32,20 @@ class PostgresService:
     label = "PostgreSQL"
 
     def compose_fragment(self) -> dict:
+        return self.compose_fragment_for(None, {"name": "postgres", "prefix": "", "_production": False})
+
+    def compose_fragment_for(self, config, instance: dict) -> dict:
+        name, prefix = instance["name"], _prefix(instance)
+        production = instance.get("_production", False)
         return {
-            "postgres": {
+            name: {
                 "image": "postgres:17.12-alpine3.24",
                 "environment": {
-                    "POSTGRES_DB": "${DB_NAME:-app}",
-                    "POSTGRES_USER": "${DB_USER:-app}",
-                    "POSTGRES_PASSWORD": "${DB_PASSWORD:-ship}",
+                    "POSTGRES_DB": _value(prefix + "DB_NAME", "app"),
+                    "POSTGRES_USER": _value(prefix + "DB_USER", "app"),
+                    "POSTGRES_PASSWORD": _value(prefix + "DB_PASSWORD", "ship", production),
                 },
-                "volumes": ["postgres_data:/var/lib/postgresql/data"],
+                "volumes": [f"{name}_data:/var/lib/postgresql/data"],
                 "healthcheck": {
                     "test": ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""],
                     "interval": "5s",
@@ -51,12 +56,17 @@ class PostgresService:
         }
 
     def app_environment(self) -> dict[str, str]:
+        return self.app_environment_for(None, {"name": "postgres", "prefix": "", "_production": False})
+
+    def app_environment_for(self, config, instance: dict) -> dict[str, str]:
+        name, prefix = instance["name"], _prefix(instance)
+        production = instance.get("_production", False)
         return {
-            "DB_HOST": "postgres",
+            "DB_HOST": name,
             "DB_PORT": "5432",
-            "DB_NAME": "${DB_NAME:-app}",
-            "DB_USER": "${DB_USER:-app}",
-            "DB_PASSWORD": "${DB_PASSWORD:-ship}",
+            "DB_NAME": _value(prefix + "DB_NAME", "app"),
+            "DB_USER": _value(prefix + "DB_USER", "app"),
+            "DB_PASSWORD": _value(prefix + "DB_PASSWORD", "ship", production),
         }
 
     def database_shell(self, config, instance: dict[str, str]) -> list[str]:

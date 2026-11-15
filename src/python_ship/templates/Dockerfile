@@ -1,4 +1,5 @@
 ARG PYTHON_VERSION=3.13
+@ASSET_STAGE@
 FROM python:${PYTHON_VERSION}-slim AS builder
 ARG SHIP_SERVER_REQUIREMENT="uvicorn>=0.53,<1"
 COPY --from=ghcr.io/astral-sh/uv:@UV_VERSION@ /uv /uvx /bin/
@@ -12,6 +13,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 COPY . /app
+@ASSET_COPY@
 
 # Keep dependencies outside /app so the development bind mount cannot hide them.
 RUN uv venv /opt/ship-venv

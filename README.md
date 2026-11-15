@@ -96,7 +96,8 @@ different localhost port, especially when running two Ship projects at once.
 On macOS or Windows, install the [Mutagen CLI](https://mutagen.io/documentation/introduction/installation/)
 and set `SHIP_MUTAGEN=1` in the host shell when running `ship up` to synchronize
 source through Mutagen instead of a Docker bind mount. Ship waits for the first
-sync before reporting startup, and `ship down` terminates that project's sync
+sync into the app and any named process containers before reporting startup;
+`ship down` terminates that project's sync
 session. The app image installs Python dependencies during build, before sync;
 local virtual environments, caches, build output, `.env` files, and VCS
 directories are excluded from synchronization.
@@ -114,17 +115,35 @@ Run `ship doctor` to see the Ship, Python, server, and service image versions,
 published Dockerfile warning, and each container's state and health. It reports
 missing, exited, restarting, or unhealthy services with a recovery command.
 
-## Production model (Phase 6 in progress)
+## Production builds
 
-Run `ship config:production` to write `ship/compose.production.json` from the
+Run `ship config:test` to validate the development and production models,
+including required credentials in `.env.production`. Run `ship build` to write
+`ship/compose.production.json` and build the production app image from the
 same `ship.json` used for development. This model builds the `production`
 Dockerfile target, reads `.env.production`, omits the source bind mount, and
 does not publish the app port. It has a separate Compose project name from
 development. The image runs as UID 10001 and contains the
 installed app and ASGI server without uv or pip. Run `ship init --force` in an
 existing project to publish the new multi-stage Dockerfile before using this
-command. Credential validation, production processes, and deployment checks
-are the next Phase 6 steps.
+command. Set `publish_ports` to `true` in `ship.json` to expose port 8000 in
+the production model; `SHIP_PRODUCTION_PORT` changes the host port. Framework
+adapters keep their production startup behavior separate: Django runs
+`manage.py check --deploy` before the ASGI server, while generic ASGI and
+FastAPI start their selected server directly. Set `django_collectstatic` to
+`true` to run `collectstatic --noinput` on Django startup after configuring
+`STATIC_ROOT`; the output stays in the container unless the app serves it or
+an external webserver consumes it.
+
+For a long-running worker or scheduler, set `processes` in `ship.json` to a
+mapping of Compose service names to argument lists, for example
+`{"worker": ["python", "worker.py"]}`. Each process uses the application
+image and environment without publishing a port. To compile npm assets into
+the production image, run `ship init --node-assets` and provide a
+`package-lock.json` plus a `build` script that writes to `dist/`. Node and
+`node_modules` stay out of the Python runtime image. Existing projects can
+set `node_assets` in `ship.json` and run `ship init --force` to refresh the
+Dockerfile.
 
 Running `ship init` again preserves the existing selections, extensions, and
 Dockerfile. Ship records the version of its published Dockerfile and warns when

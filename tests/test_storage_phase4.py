@@ -50,6 +50,11 @@ class StorageCatalogTests(unittest.TestCase):
         self.assertEqual(garage["environment"]["GARAGE_DEFAULT_SECRET_KEY"], model["services"]["app"]["environment"]["AWS_SECRET_ACCESS_KEY"])
         self.assertEqual("${AWS_BUCKET:-local}", garage["environment"]["GARAGE_DEFAULT_BUCKET"])
         self.assertIn("garage_meta", model["volumes"])
+        (self.root / ".env.production").write_text(
+            "AWS_SECRET_ACCESS_KEY=fixture-production-secret\n"
+            f"GARAGE_RPC_SECRET={'1' * 64}\n"
+            "GARAGE_ADMIN_TOKEN=fixture-production-token\n"
+        )
         self.assertEqual(0, main(["--project-directory", str(self.root), "config:test"]))
         (self.root / "ship" / "garage" / "garage.toml").unlink()
         self.assertEqual(1, main(["--project-directory", str(self.root), "config:test"]))

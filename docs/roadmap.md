@@ -194,27 +194,38 @@ dependencies.
 - [x] Build a production Python image using uv and declared locks, with a
   non-root runtime, a predictable process command, and no development tools
   or secret files baked in.
-- [ ] Put framework-specific production behavior in adapters: Django
+- [x] Put framework-specific production behavior in adapters: Django
   deployment checks and static collection strategy; FastAPI and generic
   ASGI startup without Django assumptions.
-- [ ] Support optional Node asset builds and additional long-running Python
+- [x] Support optional Node asset builds and additional long-running Python
   processes such as workers and schedulers from the application image.
-- [ ] Require real production credentials and validate `.env.production`
+- [x] Require real production credentials and validate `.env.production`
   before invoking Docker; keep production ports unpublished unless requested.
-- [ ] Make `config:test` build and validate both Compose models and report
+- [x] Make `config:test` build and validate both Compose models and report
   missing credentials, unsafe settings, and conflicting names together.
-- [ ] Verify a production HTTP request, database connection, and container
+- [x] Verify a production HTTP request, database connection, and container
   restart for generic ASGI, Django, and FastAPI fixtures.
 
-Phase 6 progress: `ship config:production` generates a separate Compose file
+Phase 6 complete: `ship build` generates a separate Compose file
 and project name. The app has no source bind mount or published port, and
 production rejects host bind mounts from extensions. A multi-stage Dockerfile
 uses uv in the builder and runs the production app as UID 10001 without uv or
 pip. A live generic ASGI Docker check passed HTTP startup and verified that
 `.env.production` was absent from the image. Existing projects must refresh
 their published Dockerfile with `ship init --force` before using the production
-target. Credential validation, adapter deployment behavior, extra processes,
-and the full production fixture matrix remain open.
+target. `config:test` validates both models and lists missing or known-default
+production credentials from `.env.production`; `ship build` checks them before
+invoking Docker. Production ports stay unpublished unless `publish_ports` is
+set. Django runs its deployment check before startup and can collect static
+files when selected; generic ASGI and FastAPI start their ASGI server directly.
+Optional npm asset builds ran in a Node build stage and copied `dist/` into
+the Python image without carrying Node into runtime. A named worker shared
+the production app image and connected to PostgreSQL. Generic ASGI, Django,
+and FastAPI each passed a production HTTP request, PostgreSQL query, and
+container restart. The Python CLI now matches PHP Ship's production command
+pattern: `config:test` validates and `build` generates/builds; the temporary
+`config:production` command was removed. Phase 7 will add image-build
+deduplication and portable releases.
 
 ## 7. Produce portable releases
 

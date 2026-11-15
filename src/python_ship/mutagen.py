@@ -49,31 +49,33 @@ def stop(root: Path, *, required: bool = False) -> None:
         raise ConfigError(f"Could not stop Mutagen sync: {result.stderr.strip() or result.stdout.strip()}")
 
 
-def start(prefix: list[str], root: Path) -> None:
+def start(prefix: list[str], root: Path, services: tuple[str, ...] = ("app",)) -> None:
     binary = _binary(required=True)
     assert binary is not None
-    container = subprocess.run(prefix + ["ps", "-q", "app"], cwd=root, capture_output=True, text=True, check=False)
-    container_id = container.stdout.strip()
-    if container.returncode != 0 or not container_id:
-        raise ConfigError("Could not find the running app container for Mutagen sync.")
     label = _label(root)
-    name = "ship-" + label.partition("=")[2]
-    command = [binary, "sync", "create", "--no-global-configuration", "--name", name, "--label", label,
-               "--mode", "two-way-resolved", "--ignore-vcs"]
-    for pattern in IGNORES:
-        command += ["--ignore", pattern]
-    command += [str(root.resolve()), f"docker://{container_id}/app"]
-    created = _run(command, root)
-    if created.returncode != 0:
-        raise ConfigError(f"Could not create Mutagen sync: {created.stderr.strip() or created.stdout.strip()}")
     try:
+        for service in services:
+            container = subprocess.run(prefix + ["ps", "-q", service], cwd=root, capture_output=True, text=True, check=False)
+            container_id = container.stdout.strip()
+            if container.returncode != 0 or not container_id:
+                raise ConfigError(f"Could not find the running {service} container for Mutagen sync.")
+            name = "ship-" + label.partition("=")[2] + "-" + service
+            command = [binary, "sync", "create", "--no-global-configuration", "--name", name, "--label", label,
+                       "--mode", "two-way-resolved", "--ignore-vcs"]
+            for pattern in IGNORES:
+                command += ["--ignore", pattern]
+            command += [str(root.resolve()), f"docker://{container_id}/app"]
+            created = _run(command, root)
+            if created.returncode != 0:
+                raise ConfigError(f"Could not create Mutagen sync for {service}: {created.stderr.strip() or created.stdout.strip()}")
         deadline = time.monotonic() + 120
         while time.monotonic() < deadline:
             status = _run([binary, "sync", "list", "--label-selector", label,
                            "--template", '{{range .}}{{.Status}}|{{.Alpha.Connected}}|{{.Beta.Connected}}{{"\\n"}}{{end}}'], root)
             if status.returncode != 0:
                 raise ConfigError(f"Could not inspect Mutagen sync: {status.stderr.strip()}")
-            if any(line.strip().lower() == "watching|true|true" for line in status.stdout.splitlines()):
+            ready = [line for line in status.stdout.splitlines() if line.strip().lower() == "watching|true|true"]
+            if len(ready) == len(services):
                 flushed = _run([binary, "sync", "flush", "--label-selector", label], root)
                 if flushed.returncode != 0:
                     raise ConfigError(f"Could not flush Mutagen sync: {flushed.stderr.strip()}")

@@ -32,7 +32,11 @@ class ServerSelectionTests(unittest.TestCase):
                 dev = build_compose(config, self.root)["services"]["app"]
                 prod = build_compose(config, self.root, production=True)["services"]["app"]
                 self.assertEqual(["python", "-m", "hypercorn", target, "--bind", "0.0.0.0:8000", "--reload"], dev["command"])
-                self.assertEqual(["python", "-m", "hypercorn", target, "--bind", "0.0.0.0:8000"], prod["command"])
+                if framework == "django":
+                    self.assertIn("python manage.py check --deploy", prod["command"][2])
+                    self.assertIn(f"exec python -m hypercorn {target}", prod["command"][2])
+                else:
+                    self.assertEqual(["python", "-m", "hypercorn", target, "--bind", "0.0.0.0:8000"], prod["command"])
                 self.assertEqual("hypercorn==0.18.0", dev["build"]["args"]["SHIP_SERVER_REQUIREMENT"])
                 self.assertNotIn("volumes", prod)
 

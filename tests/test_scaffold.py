@@ -20,6 +20,7 @@ class ScaffoldTests(unittest.TestCase):
         (self.root / "app" / "main.py").write_text("app = object()\n", encoding="utf-8")
 
     def test_fastapi_init_and_compose(self):
+        (self.root / ".env.production").write_text("DB_PASSWORD=fixture-production-password\n")
         with patch.object(Path, "cwd", return_value=self.root), patch("python_ship.cli.require_uv", return_value="/usr/bin/uv"):
             self.assertEqual(0, main(["init", "--framework", "fastapi", "--app", "app.main:app", "--database", "postgres", "--cache", "redis"]))
             self.assertEqual(0, main(["config:test"]))

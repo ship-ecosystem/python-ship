@@ -22,6 +22,10 @@ class ShipConfig:
     networks: dict[str, str] = field(default_factory=dict)
     silo_image: str = "distroless"
     server: str = "uvicorn"
+    publish_ports: bool = False
+    processes: dict[str, list[str]] = field(default_factory=dict)
+    django_collectstatic: bool = False
+    node_assets: bool = False
 
     @classmethod
     def read(cls, project_root: Path) -> "ShipConfig":
@@ -53,7 +57,7 @@ class ShipConfig:
         if not isinstance(data, dict):
             return None, ["ship.json must contain a JSON object."]
         problems = []
-        allowed = {"framework", "app", "python", "services", "extensions", "name", "instances", "networks", "silo_image", "server"}
+        allowed = {"framework", "app", "python", "services", "extensions", "name", "instances", "networks", "silo_image", "server", "publish_ports", "processes", "django_collectstatic", "node_assets"}
         unknown = set(data) - allowed
         if unknown:
             problems.append(f"Unknown ship.json fields: {', '.join(sorted(unknown))}")
@@ -117,9 +121,29 @@ class ShipConfig:
         server = data.get("server", "uvicorn")
         if not isinstance(server, str) or not re.fullmatch(r"[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*", server):
             problems.append("ship.json server must be a nonempty ASGI server key.")
+        publish_ports = data.get("publish_ports", False)
+        if not isinstance(publish_ports, bool):
+            problems.append("ship.json publish_ports must be a boolean.")
+        processes = data.get("processes", {})
+        if not isinstance(processes, dict):
+            problems.append("ship.json processes must map service names to command argument lists.")
+        else:
+            for process_name, command in processes.items():
+                if not isinstance(process_name, str) or not re.fullmatch(r"[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*", process_name) or process_name == "app":
+                    problems.append(f"ship.json process name {process_name!r} is invalid or reserved.")
+                if not isinstance(command, list) or not command or any(not isinstance(part, str) or not part for part in command):
+                    problems.append(f"ship.json process {process_name!r} must have a nonempty argument list.")
+        django_collectstatic = data.get("django_collectstatic", False)
+        if not isinstance(django_collectstatic, bool):
+            problems.append("ship.json django_collectstatic must be a boolean.")
+        elif django_collectstatic and framework != "django":
+            problems.append("ship.json django_collectstatic requires the Django adapter.")
+        node_assets = data.get("node_assets", False)
+        if not isinstance(node_assets, bool):
+            problems.append("ship.json node_assets must be a boolean.")
         if problems:
             return None, problems
-        return cls(framework, data["app"], python, services, extensions, name, instances, networks, silo_image, server), []
+        return cls(framework, data["app"], python, services, extensions, name, instances, networks, silo_image, server, publish_ports, processes, django_collectstatic, node_assets), []
 
     def write(self, project_root: Path) -> None:
         payload = {
@@ -139,4 +163,12 @@ class ShipConfig:
             payload["silo_image"] = self.silo_image
         if self.server != "uvicorn":
             payload["server"] = self.server
+        if self.publish_ports:
+            payload["publish_ports"] = True
+        if self.processes:
+            payload["processes"] = self.processes
+        if self.django_collectstatic:
+            payload["django_collectstatic"] = True
+        if self.node_assets:
+            payload["node_assets"] = True
         (project_root / "ship.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")

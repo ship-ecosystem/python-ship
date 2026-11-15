@@ -100,6 +100,12 @@ class DjangoAdapter:
     def release_commands(self, config: ShipConfig) -> list[list[str]]:
         return [["python", "manage.py", "migrate", "--noinput"]]
 
+    def production_startup_commands(self, config: ShipConfig) -> list[list[str]]:
+        commands = [["python", "manage.py", "check", "--deploy"]]
+        if config.django_collectstatic:
+            commands.append(["python", "manage.py", "collectstatic", "--noinput"])
+        return commands
+
 
 class FastAPIAdapter:
     key = "fastapi"

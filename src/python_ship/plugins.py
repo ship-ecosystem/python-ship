@@ -1,0 +1,37 @@
+"""Load explicitly selected extensions from installed Python distributions."""
+
+from importlib.metadata import entry_points
+import re
+
+from .adapters import BUILTIN_ADAPTERS
+from .config import ConfigError, ShipConfig
+from .services import BUILTIN_SERVICES
+
+
+def load_extensions(config: ShipConfig) -> tuple[dict, dict]:
+    adapters = dict(BUILTIN_ADAPTERS)
+    services = dict(BUILTIN_SERVICES)
+    for selected in config.extensions:
+        matches = [
+            (kind, point)
+            for kind, group in (("adapter", "python_ship.adapters"), ("service", "python_ship.services"))
+            for point in entry_points(group=group)
+            if point.name == selected
+        ]
+        if len(matches) != 1:
+            raise ConfigError(f"Extension {selected!r} must match exactly one installed python_ship entry point.")
+        kind, point = matches[0]
+        try:
+            extension = point.load()()
+        except Exception as exc:
+            raise ConfigError(f"Could not load extension {selected!r}: {exc}") from exc
+        target = adapters if kind == "adapter" else services
+        if not isinstance(getattr(extension, "key", None), str) or not re.fullmatch(r"[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*", extension.key) or extension.key in target:
+            raise ConfigError(f"Extension {selected!r} has an invalid or duplicate key.")
+        expected = ("detect", "validate", "development_command", "production_command", "console_commands", "release_commands") if kind == "adapter" else ("group", "label", "compose_fragment", "app_environment")
+        if any(not hasattr(extension, attr) for attr in expected):
+            raise ConfigError(f"Extension {selected!r} does not implement the {kind} contract.")
+        if kind == "service" and (not isinstance(extension.group, str) or not re.fullmatch(r"[a-z][a-z0-9_-]*", extension.group)):
+            raise ConfigError(f"Extension {selected!r} has an invalid service group.")
+        target[extension.key] = extension
+    return adapters, services

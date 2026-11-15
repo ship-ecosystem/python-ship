@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "python-ship"
+version = "0.1.0.dev0"
+description = "Docker development environments for Python web apps"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{name = "python-ship"}]
+keywords = ["docker", "compose", "django", "fastapi", "development"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: Console",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Build Tools",
+]
+dependencies = ["typer>=0.27,<0.28", "uvicorn>=0.53,<1"]
+
+[project.scripts]
+ship = "python_ship.cli:main"
+
+[project.urls]
+Repository = "https://github.com/python-ship/ship"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+python_ship = ["templates/Dockerfile", "templates/garage/Dockerfile", "templates/garage/garage.toml"]

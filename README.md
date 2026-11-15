@@ -27,6 +27,12 @@ The distribution name is provisionally `python-ship`, the import name is
 `python_ship`, and the installed command is `ship`. The intended repository is
 `github.com/python-ship/ship`. PyPI project ownership has not yet been claimed.
 
+The `ship` entry point is one cross-platform Python CLI, like PHP Ship's PHP
+CLI. The uv tool installation above obtains an isolated Python for that CLI;
+the application and its dependency commands still run in Docker. Like PHP
+Ship's requirement for host PHP, the CLI has a host language runtime; uv
+manages that runtime without requiring a preinstalled system Python.
+
 `ship init` requires [uv](https://docs.astral.sh/uv/getting-started/installation/).
 If uv is missing, Ship asks whether to install it with Astral's official
 installer. Answering no, or an installer failure, stops initialization before

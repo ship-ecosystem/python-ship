@@ -106,7 +106,7 @@ jobs:
           curl --fail --show-error --silent --location --output /tmp/mutagen.tar.gz https://github.com/mutagen-io/mutagen/releases/download/v0.18.1/mutagen_linux_amd64_v0.18.1.tar.gz
           echo '7735286c778cc438418209f24d03a64f3a0151c8065ef0fe079cfaf093af6f8f  /tmp/mutagen.tar.gz' | sha256sum --check
           mkdir -p /tmp/ship-mutagen-bin
-          tar -xzf /tmp/mutagen.tar.gz -C /tmp/ship-mutagen-bin mutagen
+          tar -xzf /tmp/mutagen.tar.gz -C /tmp/ship-mutagen-bin mutagen mutagen-agents.tar.gz
           echo /tmp/ship-mutagen-bin >> "$GITHUB_PATH"
           /tmp/ship-mutagen-bin/mutagen version
       - name: Verify live file sync and reload

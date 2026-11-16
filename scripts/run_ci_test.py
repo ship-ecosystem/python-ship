@@ -14,7 +14,11 @@ def main() -> int:
     )
     print(completed.stdout, end="", flush=True)
     if completed.returncode:
-        message = completed.stdout[-6000:].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        start = completed.stdout.find("\n======================================================================\n")
+        end = completed.stdout.find("\nFAILED (", start)
+        endline = completed.stdout.find("\n", end + 1) if end >= 0 else -1
+        summary = completed.stdout[start:endline] if start >= 0 and endline >= 0 else completed.stdout[-6000:]
+        message = summary[-10000:].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
         print(f"::error title=Python Ship test failure::{message}", flush=True)
     return completed.returncode
 

@@ -66,6 +66,29 @@ jobs:
           SHIP_PRODUCTION_MATRIX_TEST: '1'
         run: python scripts/run_ci_test.py tests.test_phase6_docker.ProductionDockerTests -v
 
+  community-extensions:
+    name: Installed community adapter and service
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - run: python -m pip install -e . uv==0.13.3
+      - name: Build and install extension wheels
+        run: |
+          uv build --wheel --out-dir dist/examples examples/community-service
+          uv build --wheel --out-dir dist/examples examples/community-adapter
+          python -m pip install --no-deps dist/examples/*.whl
+      - name: Verify installed entry points and Docker release paths
+        env:
+          SHIP_EXAMPLE_PLUGINS_TEST: '1'
+          SHIP_EXAMPLE_DOCKER_TEST: '1'
+        run: python scripts/run_ci_test.py tests.test_phase8.InstalledExamplePlugins tests.test_phase8_docker.InstalledExamplesDockerTests -v
+
   mutagen:
     name: Mutagen sync and reload
     runs-on: ubuntu-latest

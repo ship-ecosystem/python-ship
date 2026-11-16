@@ -200,8 +200,8 @@ class PhaseThreeTests(unittest.TestCase):
             for arguments in (["up"], ["logs"], ["exec", "app", "python", "--version"], ["db"], ["shell"], ["down"]):
                 self.assertEqual(0, main(["--project-directory", str(self.root), *arguments]))
         for command, kwargs in calls:
-            self.assertIn(str(override), command)
-            self.assertEqual(self.root, kwargs["cwd"])
+            self.assertIn(str(override.resolve()), command)
+            self.assertEqual(self.root.resolve(), kwargs["cwd"])
         self.assertEqual(["exec", "app", "python", "--version"], calls[2][0][-4:])
 
         django = Path(__file__).parent / "fixtures" / "django_app"
@@ -211,7 +211,7 @@ class PhaseThreeTests(unittest.TestCase):
         ShipConfig("django", "project.asgi:application").write(self.root)
         with patch("python_ship.cli.shutil.which", return_value="/usr/bin/docker"), patch("python_ship.cli.subprocess.run", return_value=subprocess.CompletedProcess([], 0)) as manage:
             self.assertEqual(0, main(["--project-directory", str(self.root), "manage", "check", "--deploy"]))
-        self.assertIn(str(override), manage.call_args.args[0])
+        self.assertIn(str(override.resolve()), manage.call_args.args[0])
         self.assertEqual(["exec", "app", "python", "manage.py", "check", "--deploy"], manage.call_args.args[0][-6:])
 
     def test_database_shell_selects_named_instance(self):

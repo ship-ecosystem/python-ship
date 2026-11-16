@@ -1,0 +1,25 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "enabledManagers": ["pep621", "github-actions", "dockerfile", "custom.regex"],
+  "prConcurrentLimit": 5,
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Review Docker images embedded in built-in service definitions",
+      "managerFilePatterns": ["/^src/python_ship/(services|storage)[.]py$/"],
+      "matchStrings": ["\"image\": \"(?<depName>[A-Za-z0-9./_-]+):(?<currentValue>[A-Za-z0-9._-]+)\""],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Keep the Playwright server package and browser image on one version",
+      "managerFilePatterns": ["/^src/python_ship/services[.]py$/"],
+      "matchStrings": ["class PlaywrightService:[\\s\\S]*?version = \"(?<currentValue>[0-9.]+)\""],
+      "depNameTemplate": "playwright",
+      "datasourceTemplate": "npm",
+      "versioningTemplate": "npm"
+    }
+  ]
+}

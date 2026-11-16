@@ -25,6 +25,7 @@ from .compose import (
     build_compose,
     resolve_selections,
     selection_problems,
+    server_for,
     write_compose,
 )
 from .config import ConfigError, ShipConfig
@@ -138,8 +139,11 @@ def config_problems(project: Path, *, production: bool = True) -> list[str]:
     except ConfigError as exc:
         return [*problems, str(exc)]
     problems.extend(adapter_problems(config, project, registry))
-    if config.server not in registry.servers:
-        problems.append(f"Unknown ASGI server {config.server!r}; use one of {', '.join(sorted(registry.servers))}.")
+    if not problems:
+        try:
+            server_for(config, project, registry)
+        except ConfigError as exc:
+            problems.append(str(exc))
     problems.extend(selection_problems(config, registry))
     try:
         console_commands(registry.adapter(config))
@@ -218,9 +222,9 @@ def create_app(adapter_commands: dict[str, list[str]] | None = None) -> typer.Ty
 
     @app.command("init")
     def init_command(
-        app_target: Annotated[str | None, typer.Option("--app", help="ASGI import target, such as main:app.")] = None,
-        framework: Annotated[str | None, typer.Option(help="Framework adapter: generic, django, fastapi, or an extension.")] = None,
-        server: Annotated[str | None, typer.Option(help="ASGI server: uvicorn, hypercorn, or an extension.")] = None,
+        app_target: Annotated[str | None, typer.Option("--app", help="App import target, such as main:app.")] = None,
+        framework: Annotated[str | None, typer.Option(help="Framework adapter: generic, django, fastapi, flask, or an extension.")] = None,
+        server: Annotated[str | None, typer.Option(help="Web server: uvicorn, hypercorn, granian (ASGI); gunicorn, granian (WSGI); or an extension. Defaults to the one recommended for the app.")] = None,
         python_version: Annotated[str | None, typer.Option("--python", help="Python branch for the image, such as 3.13.")] = None,
         database: Annotated[str | None, typer.Option(help="Database service, or none.")] = None,
         cache: Annotated[str | None, typer.Option(help="Cache service, or none.")] = None,
@@ -229,6 +233,8 @@ def create_app(adapter_commands: dict[str, list[str]] | None = None) -> typer.Ty
         mail: Annotated[str | None, typer.Option(help="Mail capture service, or none.")] = None,
         testing: Annotated[str | None, typer.Option(help="Browser testing service, or none.")] = None,
         frontend: Annotated[str | None, typer.Option(help="Frontend tooling service, or none.")] = None,
+        broker: Annotated[str | None, typer.Option(help="Message broker service (rabbitmq), or none.")] = None,
+        tasks: Annotated[str | None, typer.Option(help="Background task queue (celery), or none.")] = None,
         silo_image: Annotated[str | None, typer.Option("--silo-image", help="Silo image: standard or distroless.")] = None,
         node_assets: Annotated[bool | None, typer.Option("--node-assets/--no-node-assets", help="Build npm assets into the production image.")] = None,
         force: Annotated[bool, typer.Option("--force", help="Republish ship/Dockerfile, replacing local edits.")] = False,
@@ -237,7 +243,8 @@ def create_app(adapter_commands: dict[str, list[str]] | None = None) -> typer.Ty
         """Pick services, write ship.json and publish the ship/ directory."""
         options = InitOptions(
             app=app_target, framework=framework, server=server, python=python_version,
-            selections={"database": database, "cache": cache, "storage": storage, "search": search,
+            selections={"database": database, "cache": cache, "broker": broker, "tasks": tasks,
+                        "storage": storage, "search": search,
                         "mail": mail, "testing": testing, "frontend": frontend},
             silo_image=silo_image, node_assets=node_assets, force=force,
             interactive=not no_interaction and interactive_terminal(),
@@ -412,7 +419,7 @@ def up() -> int:
     model = build_compose(config, project)
     if mutagen_enabled():
         try:
-            start_mutagen(prefix, project, (config.app_service, *config.processes))
+            start_mutagen(prefix, project, tuple(model["x-ship"]["app_services"]))
         except ConfigError:
             run(prefix + ["down"], project)
             raise
@@ -484,7 +491,7 @@ def doctor() -> int:
     config = read_config(project)
     model = build_compose(config, project)
     typer.echo(f"python-ship {__version__}; project {model['name']}; Python {config.python}; "
-               f"framework {config.framework}; ASGI server {config.server}")
+               f"framework {config.framework}; server {server_for(config, project).key}")
     typer.echo(f"Published ship/Dockerfile: python-ship {published_version(project) or 'unknown'}")
     warning = stub_version_warning(project)
     if warning:

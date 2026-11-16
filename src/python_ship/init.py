@@ -11,7 +11,7 @@ import sys
 import typer
 
 from . import __version__
-from .compose import build_compose
+from .compose import app_interface, build_compose
 from .config import (
     GROUPS_SUPPORTING_ADDITIONAL_INSTANCES,
     INSTANCE_NAME,
@@ -31,11 +31,13 @@ NONE = "none"
 GROUPS = {
     "database": "database",
     "cache": "cache",
+    "broker": "message broker",
+    "tasks": "background task queue",
     "storage": "object storage",
     "search": "search engine",
     "mail": "mail capture service",
     "testing": "browser testing driver",
-    "frontend": "frontend tooling",
+    "frontend": "frontend toolchain",
 }
 
 DOCKERIGNORE = (
@@ -83,6 +85,10 @@ class InitOptions:
     node_assets: bool | None = None
     force: bool = False
     interactive: bool = False
+
+
+def _article(noun: str) -> str:
+    return "an" if noun[:1].lower() in "aeiou" else "a"
 
 
 def interactive_terminal() -> bool:
@@ -209,18 +215,24 @@ def resolve_config(root: Path, options: InitOptions) -> ShipConfig:
     suggested = existing.app if existing and existing.framework == framework else _default_app(adapter, root)
     app = options.app
     if app is None and interactive:
-        app = str(typer.prompt("ASGI app target (module:callable)", default=suggested or "main:app")).strip()
+        app = str(typer.prompt("App target (module:callable)", default=suggested or "main:app")).strip()
     app = app or suggested
     if not app:
         raise ConfigError(
             f"Could not find the {adapter.label} app to serve; pass it with --app, such as `--app main:app`."
         )
 
-    server = options.server or base.server
+    # Suggest servers that can run this app: ASGI (FastAPI, Django's asgi.py) or WSGI (Flask, wsgi.py).
+    interface = app_interface(replace(base, framework=framework, app=app), root, registry)
+    compatible = registry.servers_for(interface)
     if options.server and options.server not in registry.servers:
-        raise ConfigError(f"Unknown ASGI server {options.server!r}; use one of {', '.join(sorted(registry.servers))}.")
+        raise ConfigError(f"Unknown web server {options.server!r}; use one of {', '.join(sorted(registry.servers))}.")
+    current = base.server if base.server and base.server in [item.key for item in compatible] else None
+    server = options.server or current or compatible[0].key
     if interactive and not options.server:
-        server = select("Select an ASGI server", {key: item.label for key, item in registry.servers.items()}, server)
+        choices = {item.key: item.label + (" (recommended)" if index == 0 else "") for index, item in enumerate(compatible)}
+        server = select(f"Select a web server for this {interface.upper()} app", choices, server)
+    registry.server(replace(base, server=server), interface)  # Rejects a server that can't run this app.
 
     services = dict(base.services)
     flags = options.selections or {}
@@ -232,7 +244,7 @@ def resolve_config(root: Path, options: InitOptions) -> ShipConfig:
                 raise ConfigError(f"Unknown {group} service {flagged!r}; use one of {', '.join(choices)}.")
             answer = flagged
         elif interactive and len(choices) > 1:
-            answer = select(f"Select a {label}", choices, services.get(group, NONE))
+            answer = select(f"Select {_article(label)} {label}", choices, services.get(group, NONE))
         else:
             continue
         if answer == NONE:

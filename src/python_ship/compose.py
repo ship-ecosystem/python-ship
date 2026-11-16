@@ -14,7 +14,7 @@ from typing import Any
 
 from . import __version__
 from .config import ConfigError, ShipConfig, command_argv
-from .contracts import ServiceContext, ServiceDefinition, ShipEnvironment
+from .contracts import APP_PROCESS, Interface, ServiceContext, ServiceDefinition, ShipEnvironment, WebServer
 from .mutagen import enabled as mutagen_enabled
 from .plugins import Registry, load_extensions
 from .security import build_arg as python_floor
@@ -157,18 +157,22 @@ def _escape_dollars(argv: list[str]) -> list[str]:
 
 def _app_command(config: ShipConfig, root: Path, registry: Registry, environment: ShipEnvironment) -> list[str]:
     adapter = registry.adapter(config)
-    server = registry.server(config)
+    interface = app_interface(config, root, registry)
+    server = registry.server(config, interface)
     try:
         target = adapter.server_target(config)
     except Exception as exc:
-        raise ConfigError(f"Adapter {adapter.key!r} could not provide an ASGI target: {exc}") from exc
+        raise ConfigError(f"Adapter {adapter.key!r} could not provide a server target: {exc}") from exc
     if not isinstance(target, str) or not target:
-        raise ConfigError(f"Adapter {adapter.key!r} returned an invalid ASGI target.")
+        raise ConfigError(f"Adapter {adapter.key!r} returned an invalid server target.")
     try:
-        command = server.production_command(target) if environment.is_production else server.development_command(target)
+        if environment.is_production:
+            command = server.production_command(target, interface)
+        else:
+            command = server.development_command(target, interface)
     except Exception as exc:
-        raise ConfigError(f"ASGI server {server.key!r} command failed: {exc}") from exc
-    command = _command_list(command, f"ASGI server {server.key!r} command")
+        raise ConfigError(f"Web server {server.key!r} command failed: {exc}") from exc
+    command = _command_list(command, f"Web server {server.key!r} command")
     if environment.is_production:
         try:
             release = adapter.release_commands(config)
@@ -180,6 +184,24 @@ def _app_command(config: ShipConfig, root: Path, registry: Registry, environment
         if steps:
             command = ["sh", "-c", " && ".join([*steps, "exec " + shlex.join(command)]).replace("$", "$$")]
     return command
+
+
+def app_interface(config: ShipConfig, root: Path, registry: Registry) -> Interface:
+    """ASGI or WSGI, as the selected adapter sees the app."""
+    adapter = registry.adapter(config)
+    try:
+        interface = adapter.interface(config, root)
+    except Exception as exc:
+        raise ConfigError(f"Adapter {adapter.key!r} could not tell the app's interface: {exc}") from exc
+    if interface not in ("asgi", "wsgi"):
+        raise ConfigError(f"Adapter {adapter.key!r} returned an invalid interface {interface!r}.")
+    return interface
+
+
+def server_for(config: ShipConfig, root: Path, registry: Registry | None = None) -> WebServer:
+    """The server that will run the app: the configured one, or the recommended one."""
+    registry = registry or load_extensions(config)
+    return registry.server(config, app_interface(config, root, registry))
 
 
 def adapter_problems(config: ShipConfig, root: Path, registry: Registry) -> list[str]:
@@ -204,7 +226,7 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
     if problems:
         raise ConfigError(" ".join(problems))
     selections = resolve_selections(config, registry)
-    server = registry.server(config)
+    server = server_for(config, project_root, registry)
     name = project_name(config, project_root)
     if production:
         name += "-production"
@@ -242,8 +264,21 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
         if user:
             app["user"] = user
 
+    hook = getattr(registry.adapter(config), "app_environment", None)
+    if hook is not None:
+        try:
+            adapter_environment = hook(config)
+        except Exception as exc:
+            raise ConfigError(f"Adapter {config.framework!r} app environment failed: {exc}") from exc
+        if not isinstance(adapter_environment, dict) or any(
+            not isinstance(key, str) or not isinstance(value, str) for key, value in adapter_environment.items()
+        ):
+            raise ConfigError(f"Adapter {config.framework!r} app_environment() must return a dict of strings.")
+        app["environment"].update(adapter_environment)
+
     services: dict[str, Any] = {app_name: app}
     compose: dict[str, Any] = {"name": name, "services": services}
+    app_processes: list[tuple[str, dict[str, Any]]] = []
     volumes: dict[str, None] = {}
 
     for selection in selections:
@@ -274,6 +309,12 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
                 raise ConfigError(f"Invalid Compose service name {service_name!r} from {service.key!r}.")
             if not isinstance(model, dict):
                 raise ConfigError(f"Compose service {service_name!r} must be an object.")
+            if APP_PROCESS in model:
+                # Runs from the app's image, with its environment; built once the app is complete.
+                if target_name in services or any(name == target_name for name, _ in app_processes):
+                    raise ConfigError(f"Duplicate Compose service {target_name!r}.")
+                app_processes.append((target_name, model))
+                continue
             if "ports" in model:
                 if not isinstance(model["ports"], list):
                     raise ConfigError(f"Compose service {service_name!r} ports must be a list.")
@@ -319,17 +360,25 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
             aliases.append(BROWSER_APP_HOST)
         app["networks"] = networks
 
-    if config.processes:
+    processes = [(process, {APP_PROCESS: _escape_dollars(command_argv(command))}) for process, command in config.processes.items()]
+    processes += app_processes
+    if processes:
         app["image"] = f"{name}-{app_name}:{'local' if production else 'development'}"
-        for process, command in config.processes.items():
-            model = deepcopy(app)
-            for key in ("build", "ports", "healthcheck", "extra_hosts"):
-                model.pop(key, None)
-            model["command"] = _escape_dollars(command_argv(command))
-            model["stop_grace_period"] = PROCESS_STOP_GRACE
-            if isinstance(model.get("networks"), dict):
-                model["networks"]["default"].pop("aliases", None)
-            services[process] = model
+    for process, settings in processes:
+        if process in services:
+            raise ConfigError(f"Process {process!r} conflicts with another Compose service.")
+        model = deepcopy(app)
+        for key in ("build", "ports", "healthcheck", "extra_hosts"):
+            model.pop(key, None)
+        if isinstance(model.get("networks"), dict):
+            model["networks"]["default"].pop("aliases", None)
+        extra = dict(settings)
+        model["command"] = _command_list(extra.pop(APP_PROCESS), f"Process {process!r} command")
+        model["stop_grace_period"] = PROCESS_STOP_GRACE
+        _merge(model, extra, f"services.{process}")
+        services[process] = model
+    # Every container that runs the app's code, for Mutagen sync and the deploy script.
+    compose["x-ship"] = {"app_services": [app_name, *(process for process, _ in processes)]}
 
     if production:
         for service_name, model in services.items():

@@ -7,8 +7,8 @@ entry point group and selected by name in ship.json's ``extensions`` list:
   infrastructure (a database, a cache, object storage, ...).
 - ``python_ship.adapters``: a :class:`FrameworkAdapter`, which keeps
   framework-specific knowledge (Django's ``manage.py``) out of the core.
-- ``python_ship.servers``: an :class:`ASGIServer`, which serves an adapter's
-  ASGI target (Uvicorn and Hypercorn are built in).
+- ``python_ship.servers``: a :class:`WebServer`, which serves an adapter's
+  ASGI or WSGI target (Uvicorn, Hypercorn, Gunicorn and Granian are built in).
 
 These protocols are the stable public API; everything else in the package is
 an implementation detail.
@@ -19,10 +19,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from .config import ShipConfig
+
+
+# A fragment entry holding this key becomes a container of the app's own image: its build,
+# environment, networks and (in development) code, running the given command.
+APP_PROCESS = "x-ship-app-process"
+
+Interface = Literal["asgi", "wsgi"]
+"""The calling convention of an app: ASGI (async) or WSGI (sync)."""
 
 
 class ShipEnvironment(StrEnum):
@@ -78,6 +86,16 @@ class ServiceContext:
         if self.production:
             return f"${{{variable}:?{variable} is required in .env.production}}"
         return f"${{{variable}:-{development_default}}}"
+
+    def app_process(self, command: list[str], **settings: Any) -> dict[str, Any]:
+        """A fragment entry that runs ``command`` in a container of the app's image.
+
+        It shares the app's build, environment, networks and dependencies (and, in
+        development, its bind mount), gets a 60s stop grace period, and publishes no
+        ports. Extra Compose ``settings`` are merged in. Write ``$$`` for a literal
+        ``$``, as anywhere else in a fragment.
+        """
+        return {APP_PROCESS: list(command), **settings}
 
     def setting(self, name: str, default: str) -> str:
         """A Compose expression for a non-secret value with a default in every environment."""
@@ -156,8 +174,12 @@ class FrameworkAdapter(Protocol):
         """Problems with the project or config; an empty list when it is usable."""
         ...
 
+    def interface(self, config: ShipConfig, project_root: Path) -> Interface:
+        """Whether the app is ``"asgi"`` or ``"wsgi"``; decides which servers can run it."""
+        ...
+
     def server_target(self, config: ShipConfig) -> str:
-        """The ``module:callable`` target the selected ASGI server serves."""
+        """The ``module:callable`` target the selected server serves."""
         ...
 
     def console_commands(self) -> dict[str, list[str]]:
@@ -179,8 +201,17 @@ class FrameworkAdapter(Protocol):
 
 
 @runtime_checkable
-class ASGIServer(Protocol):
-    """An ASGI server Ship installs in the app image and runs the target with."""
+class ProvidesAppEnvironment(Protocol):
+    """Optional adapter hook: variables the framework needs in every app container."""
+
+    def app_environment(self, config: ShipConfig) -> dict[str, str]:
+        """Such as Flask's ``FLASK_APP``, so ``ship flask ...`` finds the app."""
+        ...
+
+
+@runtime_checkable
+class WebServer(Protocol):
+    """A web server Ship installs in the app image and runs the target with."""
 
     key: str
     """Unique key used as ship.json's ``server``, such as ``"uvicorn"``."""
@@ -191,10 +222,13 @@ class ASGIServer(Protocol):
     requirement: str
     """One PEP 508 requirement installed into the image, such as ``"uvicorn==0.54.0"``."""
 
-    def development_command(self, target: str) -> list[str]:
+    interfaces: tuple[Interface, ...]
+    """The app interfaces it can serve: ``("asgi",)``, ``("wsgi",)`` or both."""
+
+    def development_command(self, target: str, interface: Interface) -> list[str]:
         """Serve ``target`` on 0.0.0.0:8000 with reload."""
         ...
 
-    def production_command(self, target: str) -> list[str]:
+    def production_command(self, target: str, interface: Interface) -> list[str]:
         """Serve ``target`` on 0.0.0.0:8000 for production."""
         ...

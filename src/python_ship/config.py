@@ -19,6 +19,15 @@ from typing import Any
 
 from .security import DEFAULT_PYTHON, problem_with
 
+# Alternative spellings accepted in ship.json, normalized on read. PHP Ship and Python Ship
+# both accept "pgsql" and "postgres" for PostgreSQL, and both write "postgres".
+SERVICE_ALIASES = {"pgsql": "postgres"}
+SCHEMA_URL = "https://raw.githubusercontent.com/ship-ecosystem/python-ship/main/schema/ship.schema.json"
+
+
+def canonical_service(key: str) -> str:
+    return SERVICE_ALIASES.get(key, key)
+
 
 class ConfigError(ValueError):
     """A project configuration is missing or invalid."""
@@ -38,7 +47,7 @@ RESERVED_COMMANDS = frozenset({
 })
 
 FIELDS = (
-    "framework", "app", "python", "server", "services", "additionalServices", "serviceNames",
+    "$schema", "framework", "app", "python", "server", "services", "additionalServices", "serviceNames",
     "externalNetwork", "extensions", "name", "siloImage", "publishPorts", "hostUser",
     "processes", "deployCommands", "nodeAssets", "djangoCollectstatic",
 )
@@ -70,7 +79,7 @@ class ShipConfig:
     framework: str = "generic"
     app: str = "main:app"
     python: str = DEFAULT_PYTHON
-    server: str = "uvicorn"
+    server: str | None = None
     services: dict[str, str] = field(default_factory=dict)
     additional_services: list[AdditionalService] = field(default_factory=list)
     service_names: dict[str, str] = field(default_factory=dict)
@@ -118,7 +127,7 @@ class ShipConfig:
             return None
         values: dict[str, Any] = {}
         for key in FIELDS:
-            if key not in data:
+            if key not in data or key == "$schema":
                 continue
             # djangoCollectstatic is only valid together with its framework.
             probe = {"app": "main:app", "framework": "django"} if key == "djangoCollectstatic" else {"app": "main:app"}
@@ -148,9 +157,9 @@ class ShipConfig:
             python_problem = problem_with(python)
             if python_problem:
                 problems.append(f"ship.json \"python\": {python_problem}")
-        server = data.get("server", "uvicorn")
-        if not isinstance(server, str) or not SERVICE_NAME.fullmatch(server):
-            problems.append("ship.json \"server\" must be an ASGI server key such as \"uvicorn\".")
+        server = data.get("server")
+        if server is not None and (not isinstance(server, str) or not SERVICE_NAME.fullmatch(server)):
+            problems.append("ship.json \"server\" must be a web server key such as \"uvicorn\" or \"gunicorn\".")
 
         services = data.get("services", {})
         if not isinstance(services, dict) or any(
@@ -191,7 +200,7 @@ class ShipConfig:
                 if name in seen:
                     problems.append(f"ship.json \"additionalServices\" uses the name {name!r} twice.")
                 seen.add(name)
-                additional.append(AdditionalService(group, service, name))
+                additional.append(AdditionalService(group, canonical_service(service), name))
 
         service_names = data.get("serviceNames", {})
         if not isinstance(service_names, dict) or any(
@@ -266,9 +275,9 @@ class ShipConfig:
             app=str(app),
             python=python,
             server=server,
-            services=dict(services),
+            services={group: canonical_service(key) for group, key in services.items()},
             additional_services=additional,
-            service_names=dict(service_names),
+            service_names={canonical_service(old): new for old, new in service_names.items()},
             external_network=external_network,
             extensions=list(extensions),
             name=name,
@@ -283,11 +292,12 @@ class ShipConfig:
 
     def to_json(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
+            "$schema": SCHEMA_URL,
             "framework": self.framework,
             "app": self.app,
             "python": self.python,
         }
-        if self.server != "uvicorn":
+        if self.server is not None:
             payload["server"] = self.server
         payload["services"] = dict(self.services)
         if self.additional_services:
@@ -320,7 +330,7 @@ class ShipConfig:
 
 
 _ATTRIBUTES = {
-    "framework": "framework", "app": "app", "python": "python", "server": "server",
+    "$schema": "", "framework": "framework", "app": "app", "python": "python", "server": "server",
     "services": "services", "additionalServices": "additional_services",
     "serviceNames": "service_names", "externalNetwork": "external_network",
     "extensions": "extensions", "name": "name", "siloImage": "silo_image",

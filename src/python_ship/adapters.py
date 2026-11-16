@@ -1,4 +1,4 @@
-"""Built-in framework adapters: plain ASGI, Django and FastAPI."""
+"""Built-in framework adapters: plain ASGI or WSGI apps, Django, FastAPI and Flask."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 
 from .config import ShipConfig
+from .contracts import Interface
 
 TARGET = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*")
 # Directories never searched when detecting a project's app module.
@@ -82,17 +83,38 @@ def python_files(project_root: Path, depth: int = 3) -> list[Path]:
     return sorted(found, key=lambda path: (len(path.relative_to(project_root).parts), str(path)))
 
 
+def callable_interface(project_root: Path, target: str) -> Interface | None:
+    """Guess a plain callable's interface from its signature, without importing it.
+
+    ``async def app(scope, receive, send)`` is ASGI; ``def app(environ, start_response)`` is WSGI.
+    """
+    module = module_file(project_root, target)
+    name = target.partition(":")[2]
+    try:
+        tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
+        return None
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+            positional = len(node.args.posonlyargs) + len(node.args.args)
+            if isinstance(node, ast.AsyncFunctionDef) or positional == 3:
+                return "asgi"
+            if positional == 2:
+                return "wsgi"
+    return None
+
+
 class GenericAdapter:
-    """Serve any ASGI callable; no web framework required."""
+    """Serve any ASGI or WSGI callable; no web framework required."""
 
     key = "generic"
-    label = "Plain ASGI (no framework)"
+    label = "Plain ASGI or WSGI app (no framework)"
 
     def detect(self, project_root: Path) -> bool:
         return True
 
     def default_app(self, project_root: Path) -> str | None:
-        for module in ("main", "app", "asgi", "server"):
+        for module in ("main", "app", "asgi", "wsgi", "server"):
             path = project_root / f"{module}.py"
             if path.is_file():
                 names, _ = _bindings(path)
@@ -100,6 +122,10 @@ class GenericAdapter:
                     if name in names:
                         return f"{module}:{name}"
         return None
+
+    def interface(self, config: ShipConfig, project_root: Path) -> Interface:
+        # Anything that isn't recognizably a WSGI function is treated as ASGI, the default.
+        return callable_interface(project_root, config.app) or "asgi"
 
     def validate(self, config: ShipConfig, project_root: Path) -> list[str]:
         return target_problems(project_root, config.app, "App", "main:app")
@@ -123,15 +149,23 @@ class DjangoAdapter:
 
     def default_app(self, project_root: Path) -> str | None:
         manage = project_root / "manage.py"
+        package = None
         if manage.is_file():
             match = re.search(r"""DJANGO_SETTINGS_MODULE['"]\s*,\s*['"]([\w.]+)\.settings['"]""",
                               manage.read_text(encoding="utf-8", errors="replace"))
-            if match and module_file(project_root, f"{match.group(1)}.asgi:application").is_file():
-                return f"{match.group(1)}.asgi:application"
-        for path in python_files(project_root):
-            if path.name == "asgi.py" and "application" in _bindings(path)[0]:
-                return f"{_module_name(project_root, path)}:application"
+            package = match.group(1) if match else None
+        # ASGI first: Django serves both, and ASGI also covers async views and websockets.
+        for kind in ("asgi", "wsgi"):
+            if package and module_file(project_root, f"{package}.{kind}:application").is_file():
+                return f"{package}.{kind}:application"
+        for kind in ("asgi", "wsgi"):
+            for path in python_files(project_root):
+                if path.name == f"{kind}.py" and "application" in _bindings(path)[0]:
+                    return f"{_module_name(project_root, path)}:application"
         return None
+
+    def interface(self, config: ShipConfig, project_root: Path) -> Interface:
+        return "wsgi" if config.app.partition(":")[0].rsplit(".", 1)[-1] == "wsgi" else "asgi"
 
     def validate(self, config: ShipConfig, project_root: Path) -> list[str]:
         problems = []
@@ -153,36 +187,36 @@ class DjangoAdapter:
         return commands
 
 
-_FASTAPI_APP = re.compile(r"^([A-Za-z_]\w*)\s*(?::[^=\n]+)?=\s*(?:fastapi\.)?FastAPI\(", re.MULTILINE)
+def _framework_apps(project_root: Path, module: str, constructor: str) -> list[tuple[Path, str]]:
+    """Modules that bind ``name = Constructor(...)`` for a framework, shallowest first."""
+    pattern = re.compile(rf"^([A-Za-z_]\w*)\s*(?::[^=\n]+)?=\s*(?:{module}\.)?{constructor}\(", re.MULTILINE)
+    found = []
+    for path in python_files(project_root):
+        try:
+            source = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if module not in source:
+            continue
+        match = pattern.search(source)
+        if match:
+            found.append((path, match.group(1)))
+    return found
 
 
 class FastAPIAdapter:
     key = "fastapi"
     label = "FastAPI"
 
-    def _candidates(self, project_root: Path) -> list[tuple[Path, str]]:
-        found = []
-        for path in python_files(project_root):
-            try:
-                source = path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            if "fastapi" not in source:
-                continue
-            match = _FASTAPI_APP.search(source)
-            if match:
-                found.append((path, match.group(1)))
-        return found
-
     def detect(self, project_root: Path) -> bool:
-        return bool(self._candidates(project_root))
+        return bool(_framework_apps(project_root, "fastapi", "FastAPI"))
 
     def default_app(self, project_root: Path) -> str | None:
-        candidates = self._candidates(project_root)
-        if not candidates:
-            return None
-        path, name = candidates[0]
-        return f"{_module_name(project_root, path)}:{name}"
+        found = _framework_apps(project_root, "fastapi", "FastAPI")
+        return f"{_module_name(project_root, found[0][0])}:{found[0][1]}" if found else None
+
+    def interface(self, config: ShipConfig, project_root: Path) -> Interface:
+        return "asgi"
 
     def validate(self, config: ShipConfig, project_root: Path) -> list[str]:
         return target_problems(project_root, config.app, "FastAPI app", "app.main:app")
@@ -197,5 +231,40 @@ class FastAPIAdapter:
         return []
 
 
-# Detection order for `ship init`: the most specific framework first, plain ASGI last.
-BUILTIN_ADAPTERS = {adapter.key: adapter for adapter in (DjangoAdapter(), FastAPIAdapter(), GenericAdapter())}
+class FlaskAdapter:
+    """Flask is WSGI, so it runs on Gunicorn (the suggestion) or Granian."""
+
+    key = "flask"
+    label = "Flask"
+
+    def detect(self, project_root: Path) -> bool:
+        return bool(_framework_apps(project_root, "flask", "Flask"))
+
+    def default_app(self, project_root: Path) -> str | None:
+        found = _framework_apps(project_root, "flask", "Flask")
+        return f"{_module_name(project_root, found[0][0])}:{found[0][1]}" if found else None
+
+    def interface(self, config: ShipConfig, project_root: Path) -> Interface:
+        return "wsgi"
+
+    def validate(self, config: ShipConfig, project_root: Path) -> list[str]:
+        return target_problems(project_root, config.app, "Flask app", "app:app")
+
+    def server_target(self, config: ShipConfig) -> str:
+        return config.app
+
+    def app_environment(self, config: ShipConfig) -> dict[str, str]:
+        # Lets `ship flask ...` (and `flask` inside the container) find the app.
+        return {"FLASK_APP": config.app}
+
+    def console_commands(self) -> dict[str, list[str]]:
+        return {"flask": ["flask"]}
+
+    def release_commands(self, config: ShipConfig) -> list[list[str]]:
+        return []
+
+
+# Detection order for `ship init`: the most specific framework first, the generic adapter last.
+BUILTIN_ADAPTERS = {
+    adapter.key: adapter for adapter in (DjangoAdapter(), FastAPIAdapter(), FlaskAdapter(), GenericAdapter())
+}

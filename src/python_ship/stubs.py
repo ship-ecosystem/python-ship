@@ -87,8 +87,8 @@ def _dockerfile(root: Path) -> str | None:
 
 def server_stub_problem(root: Path, config: ShipConfig) -> str | None:
     text = _dockerfile(root)
-    if text is not None and config.server != "uvicorn" and "SHIP_SERVER_REQUIREMENT" not in text:
-        return "ship/Dockerfile cannot install the selected ASGI server; run `ship init --force` to refresh it."
+    if text is not None and (config.server or "uvicorn") != "uvicorn" and "SHIP_SERVER_REQUIREMENT" not in text:
+        return "ship/Dockerfile cannot install the selected web server; run `ship init --force` to refresh it."
     return None
 
 

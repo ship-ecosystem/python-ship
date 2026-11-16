@@ -1,6 +1,7 @@
 """`ship init`: detection, interactive prompts, re-running, published files and uv."""
 
 from contextlib import contextmanager
+from dataclasses import replace
 import json
 import unittest
 from unittest.mock import patch
@@ -72,8 +73,9 @@ class NonInteractiveInitTests(ProjectTestCase):
 
     def test_invalid_flags_fail_without_writing(self):
         for arguments, message in ((["--database", "oracle"], "Unknown database service 'oracle'"),
-                                   (["--framework", "flask"], "Unknown framework 'flask'"),
-                                   (["--server", "granian"], "Unknown ASGI server"),
+                                   (["--framework", "bottle"], "Unknown framework 'bottle'"),
+                                   (["--server", "waitress"], "Unknown web server"),
+                                   (["--server", "gunicorn"], "Gunicorn (WSGI) can't serve a ASGI app"),
                                    (["--python", "3.10"], "past end of life"),
                                    (["--python", "3.13.2"], "known security vulnerabilities"),
                                    (["--silo-image", "tiny"], "standard or distroless"),
@@ -111,7 +113,8 @@ class RerunTests(ProjectTestCase):
         dockerfile = self.root / "ship" / "Dockerfile"
         dockerfile.write_text(dockerfile.read_text() + "# my edit\n")
         self.assertEqual(0, self.init())
-        self.assertEqual(config, ShipConfig.read(self.root))
+        # Everything carries over; init only makes the recommended server explicit.
+        self.assertEqual(replace(config, server="uvicorn"), ShipConfig.read(self.root))
         self.assertTrue(dockerfile.read_text().endswith("# my edit\n"))
         self.assertIn("kept your ship/Dockerfile", self.init_output.stdout)
 
@@ -130,7 +133,7 @@ class RerunTests(ProjectTestCase):
         self.assertEqual(0, self.init())
         (self.root / "ship" / "Dockerfile").write_text("FROM python:3.13-slim\n")
         self.assertEqual(1, self.init("--server", "hypercorn"))
-        self.assertIn("cannot install the selected ASGI server", self.init_output.stderr)
+        self.assertIn("cannot install the selected web server", self.init_output.stderr)
         self.assertEqual(1, self.init("--node-assets"))
         self.assertIn("nodeAssets requires a refreshed", self.init_output.stderr)
         self.assertEqual(0, self.init("--server", "hypercorn", "--node-assets", "--force"))
@@ -175,17 +178,20 @@ class InteractiveInitTests(ProjectTestCase):
         return code, output
 
     def test_picks_every_group_and_python(self):
-        # framework, app, server, database, cache, storage, search, mail, testing, frontend, python
-        with answers(["generic", "main:app", "uvicorn", "postgres", "2", "1", "None", "1", "playwright", "Node.js (npm, Vite HMR)", "3.12"],
+        # framework, app, server, database, cache, broker, tasks, storage, search, mail, testing, frontend, python
+        with answers(["generic", "main:app", "uvicorn", "postgres", "2", "None", "celery", "1", "None", "1", "playwright",
+                      "Node.js (npm, Vite HMR)", "3.12"],
                      confirms=[False]):
             code, output = self.run_init()
         self.assertEqual(0, code, output.stderr)
         config = ShipConfig.read(self.root)
         self.assertEqual("generic", config.framework)
-        self.assertEqual({"database": "postgres", "cache": "redis", "testing": "playwright", "frontend": "node"}, config.services)
+        self.assertEqual({"database": "postgres", "cache": "redis", "tasks": "celery", "testing": "playwright", "frontend": "node"},
+                         config.services)
         self.assertEqual("3.12", config.python)
         self.assertIn("Select a database", output.stdout)
-        self.assertIn("Plain ASGI (no framework)", output.stdout)
+        self.assertIn("Plain ASGI or WSGI app (no framework)", output.stdout)
+        self.assertIn("Select an object storage", output.stdout)
 
     def test_defaults_keep_an_existing_selection(self):
         self.write_config(app="main:app", services={"database": "mysql", "cache": "redis"}, python="3.14")
@@ -206,7 +212,7 @@ class InteractiveInitTests(ProjectTestCase):
 
     def test_additional_instances_silo_image_and_validation_retries(self):
         prompts = ["generic", "main:app", "1",
-                   "1", "1", "silo", "1", "1", "1", "1",           # groups: none except storage=silo
+                   "1", "1", "1", "1", "silo", "1", "1", "1", "1",  # groups: none except storage=silo
                    "database", "mysql", "Bad Name", "analytics",    # first named instance (one invalid name)
                    "1", "1", "analytics", "reports",                # second: database/postgres, name reused, then fixed
                    "distroless",                                    # silo image
@@ -224,13 +230,13 @@ class InteractiveInitTests(ProjectTestCase):
         self.assertIn("past end of life", output.stderr)
 
     def test_invalid_choice_is_asked_again(self):
-        with answers(["9", "generic", "main:app", "uvicorn", *(["None"] * 7), "3.13"], confirms=[False]):
+        with answers(["9", "generic", "main:app", "uvicorn", *(["None"] * 9), "3.13"], confirms=[False]):
             code, output = self.run_init()
         self.assertEqual(0, code, output.stderr)
         self.assertIn("'9' is not a valid choice", output.stderr)
 
     def test_flags_skip_their_questions(self):
-        with answers(["None"] * 5, confirms=[False]):
+        with answers(["None"] * 7, confirms=[False]):
             code, output = self.run_init("--framework", "generic", "--app", "main:app", "--server", "uvicorn",
                                          "--database", "postgres", "--cache", "redis", "--python", "3.13")
         self.assertEqual(0, code, output.stderr)
@@ -279,3 +285,50 @@ class UvRequirementTests(ProjectTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ServerSuggestionTests(ProjectTestCase):
+    def test_recommended_server_follows_the_app_interface(self):
+        cases = (
+            ("fastapi_app", None, "fastapi", "uvicorn"),
+            ("flask_app", None, "flask", "gunicorn"),
+            ("django_app", None, "django", "uvicorn"),
+        )
+        for fixture, _, framework, server in cases:
+            with self.subTest(fixture=fixture):
+                for path in list(self.root.iterdir()):
+                    if path.is_file():
+                        path.unlink()
+                self.copy_fixture(fixture)
+                self.assertEqual(0, self.init("--force"), self.init_output.stderr)
+                config = ShipConfig.read(self.root)
+                self.assertEqual((framework, server), (config.framework, config.server))
+
+    def test_plain_wsgi_function_gets_gunicorn_and_asgi_servers_are_refused(self):
+        (self.root / "main.py").write_text(
+            "def app(environ, start_response):\n"
+            "    start_response('200 OK', [('Content-Type', 'text/plain')])\n"
+            "    return [b'wsgi']\n")
+        self.assertEqual(0, self.init())
+        self.assertEqual("gunicorn", ShipConfig.read(self.root).server)
+        self.assertEqual(1, self.init("--server", "uvicorn"))
+        self.assertIn("Uvicorn (ASGI) can't serve a WSGI app; use one of gunicorn, granian", self.init_output.stderr)
+        self.assertEqual(0, self.init("--server", "granian"))
+
+    def test_interactive_picker_lists_only_compatible_servers(self):
+        self.copy_fixture("flask_app")
+        with answers(["flask", "app:app", "2", *(["None"] * 9), "3.13"], confirms=[False]):
+            with no_uv_prompt(), captured() as output:
+                self.assertEqual(0, self.ship("init"))
+        self.assertIn("Select a web server for this WSGI app", output.stdout)
+        self.assertIn("Gunicorn (WSGI) (recommended)", output.stdout)
+        self.assertNotIn("Uvicorn", output.stdout)
+        self.assertEqual("granian", ShipConfig.read(self.root).server)
+
+    def test_existing_compatible_server_is_kept_and_incompatible_one_replaced(self):
+        self.write_config(app="main:app", server="hypercorn")
+        self.assertEqual(0, self.init())
+        self.assertEqual("hypercorn", ShipConfig.read(self.root).server)
+        self.copy_fixture("flask_app")
+        self.assertEqual(0, self.init("--framework", "flask", "--app", "app:app", "--force"))
+        self.assertEqual("gunicorn", ShipConfig.read(self.root).server)

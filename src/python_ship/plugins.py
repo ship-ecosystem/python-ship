@@ -9,8 +9,8 @@ from typing import Any
 
 from .adapters import BUILTIN_ADAPTERS
 from .config import RESERVED_COMMANDS, ConfigError, ShipConfig
-from .contracts import ASGIServer, FrameworkAdapter, ServiceDefinition
-from .servers import BUILTIN_SERVERS
+from .contracts import FrameworkAdapter, Interface, ServiceDefinition, WebServer
+from .servers import BUILTIN_SERVERS, RECOMMENDED
 from .services import BUILTIN_SERVICES
 
 GROUPS = {"adapter": "python_ship.adapters", "service": "python_ship.services", "server": "python_ship.servers"}
@@ -19,18 +19,18 @@ GROUP = re.compile(r"[a-z][a-z0-9_-]*")
 COMMAND = re.compile(r"[a-z][a-z0-9:_-]*")
 
 _REQUIRED = {
-    "adapter": ("detect", "default_app", "validate", "server_target", "console_commands", "release_commands"),
+    "adapter": ("detect", "default_app", "interface", "validate", "server_target", "console_commands", "release_commands"),
     "service": ("compose_fragment", "app_environment"),
     "server": ("development_command", "production_command"),
 }
-_OPTIONAL = {"adapter": (), "service": ("database_shell", "validate"), "server": ()}
+_OPTIONAL = {"adapter": ("app_environment",), "service": ("database_shell", "validate"), "server": ()}
 
 
 @dataclass
 class Registry:
     adapters: dict[str, FrameworkAdapter] = field(default_factory=dict)
     services: dict[str, ServiceDefinition] = field(default_factory=dict)
-    servers: dict[str, ASGIServer] = field(default_factory=dict)
+    servers: dict[str, WebServer] = field(default_factory=dict)
 
     def in_group(self, group: str) -> list[ServiceDefinition]:
         return [service for service in self.services.values() if service.group == group]
@@ -44,12 +44,26 @@ class Registry:
             )
         return adapter
 
-    def server(self, config: ShipConfig) -> ASGIServer:
+    def servers_for(self, interface: Interface) -> list[WebServer]:
+        """Servers able to run an app with this interface, recommended ones first."""
+        ranked = [self.servers[key] for key in RECOMMENDED[interface] if key in self.servers]
+        others = [server for server in self.servers.values() if interface in server.interfaces and server not in ranked]
+        return ranked + others
+
+    def server(self, config: ShipConfig, interface: Interface) -> WebServer:
+        """The configured server, or the recommended one for the app's interface."""
+        if config.server is None:
+            return self.servers_for(interface)[0]
         server = self.servers.get(config.server)
         if server is None:
             raise ConfigError(
-                f"Unknown ASGI server {config.server!r}; use one of {', '.join(sorted(self.servers))}, "
+                f"Unknown web server {config.server!r}; use one of {', '.join(sorted(self.servers))}, "
                 "or install and select its extension."
+            )
+        if interface not in server.interfaces:
+            choices = ", ".join(item.key for item in self.servers_for(interface))
+            raise ConfigError(
+                f"{server.label} can't serve a {interface.upper()} app; use one of {choices}."
             )
         return server
 
@@ -79,6 +93,9 @@ def _check(kind: str, selected: str, extension: Any, existing: dict[str, Any]) -
         requirement = getattr(extension, "requirement", None)
         if not isinstance(requirement, str) or not requirement.strip():
             raise ConfigError(f"Extension {selected!r} needs a nonempty PEP 508 requirement.")
+        interfaces = getattr(extension, "interfaces", None)
+        if not isinstance(interfaces, (tuple, list)) or not interfaces or any(item not in ("asgi", "wsgi") for item in interfaces):
+            raise ConfigError(f"Extension {selected!r} must declare interfaces: \"asgi\", \"wsgi\" or both.")
 
 
 def load_extensions(config: ShipConfig) -> Registry:

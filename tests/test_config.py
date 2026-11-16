@@ -16,7 +16,7 @@ class ShipConfigTests(ProjectTestCase):
         config = ShipConfig.read(self.root)
         self.assertEqual("generic", config.framework)
         self.assertEqual("3.13", config.python)
-        self.assertEqual("uvicorn", config.server)
+        self.assertIsNone(config.server)  # The recommended server for the app's interface.
         self.assertEqual("standard", config.silo_image)
         self.assertTrue(config.host_user)
         self.assertFalse(config.publish_ports)
@@ -44,7 +44,7 @@ class ShipConfigTests(ProjectTestCase):
 
     def test_defaults_are_omitted_from_the_written_file(self):
         ShipConfig(app="main:app").write(self.root)
-        self.assertEqual({"framework", "app", "python", "services", "extensions"},
+        self.assertEqual({"$schema", "framework", "app", "python", "services", "extensions"},
                          set(json.loads((self.root / "ship.json").read_text())))
 
     def test_reports_every_independent_problem_in_one_pass(self):

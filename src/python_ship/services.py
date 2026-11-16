@@ -163,6 +163,96 @@ class MeilisearchService:
         }
 
 
+class RabbitMQService:
+    key = "rabbitmq"
+    group = "broker"
+    label = "RabbitMQ"
+
+    def compose_fragment(self, context: ServiceContext) -> dict[str, dict[str, Any]]:
+        model: dict[str, Any] = {
+            "image": "rabbitmq:4.3.7-management-alpine",
+            "environment": {
+                "RABBITMQ_DEFAULT_USER": context.setting("RABBITMQ_USER", "app"),
+                "RABBITMQ_DEFAULT_PASS": context.credential("RABBITMQ_PASSWORD", "ship"),
+            },
+            "volumes": [f"{context.resource_name}_data:/var/lib/rabbitmq"],
+            "healthcheck": _healthcheck(["CMD", "rabbitmq-diagnostics", "-q", "ping"],
+                                        interval="10s", timeout="10s", retries=12, start_period="20s"),
+        }
+        if context.environment.is_development and context.instance_name is None:
+            model["ports"] = ["127.0.0.1:${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"]
+        return {context.service_name: model}
+
+    def app_environment(self, context: ServiceContext) -> dict[str, str]:
+        user = context.setting("RABBITMQ_USER", "app")
+        password = context.credential("RABBITMQ_PASSWORD", "ship")
+        return {f"{context.env_prefix}AMQP_URL": f"amqp://{user}:{password}@{context.service_name}:5672//"}
+
+
+class CeleryService:
+    """Celery workers from the app's own image, with a broker and a result backend wired in.
+
+    The broker is RabbitMQ when selected, otherwise Redis. Results go to Redis when it is
+    selected (chords and other Canvas primitives need a real result backend), else to RPC.
+    """
+
+    key = "celery"
+    group = "tasks"
+    label = "Celery (worker and beat)"
+
+    def _redis(self, context: ServiceContext) -> str | None:
+        if context.config.services.get("cache") == "redis":
+            return context.config.service_names.get("redis", "redis")
+        return None
+
+    def _rabbitmq(self, context: ServiceContext) -> str | None:
+        if context.config.services.get("broker") == "rabbitmq":
+            return context.config.service_names.get("rabbitmq", "rabbitmq")
+        return None
+
+    def validate(self, context: ServiceContext) -> list[str]:
+        if self._redis(context) is None and self._rabbitmq(context) is None:
+            return ["Celery needs a broker: select RabbitMQ (`ship init --broker rabbitmq`) or Redis (`ship init --cache redis`)."]
+        return []
+
+    def _celery_app(self, context: ServiceContext) -> str:
+        module = context.config.app.partition(":")[0]
+        if context.config.framework == "django":
+            # project.asgi -> project, where Django projects define their Celery app.
+            return module.rsplit(".", 1)[0] if "." in module else module
+        return module
+
+    def compose_fragment(self, context: ServiceContext) -> dict[str, dict[str, Any]]:
+        # $$ reaches the container as $, so the shell expands the variables at start.
+        arguments = "-A $${CELERY_APP} worker --loglevel=$${CELERY_LOG_LEVEL:-info}"
+        worker = f"exec celery {arguments}"
+        if context.environment.is_development:
+            # Restart the worker on code changes when watchfiles is installed. It runs Celery's own
+            # entry point, because watchfiles doesn't expand variables in a command string.
+            worker = (f"if python -c 'import watchfiles' 2>/dev/null; then exec watchfiles --filter python "
+                      f"--args \"{arguments}\" celery.__main__.main /app; else {worker}; fi")
+        beat = "exec celery -A $${CELERY_APP} beat --loglevel=$${CELERY_LOG_LEVEL:-info} --schedule /tmp/celerybeat-schedule"
+        return {
+            context.service_name: context.app_process(["sh", "-c", worker]),
+            f"{context.service_name}-beat": context.app_process(["sh", "-c", beat]),
+        }
+
+    def app_environment(self, context: ServiceContext) -> dict[str, str]:
+        redis = self._redis(context)
+        rabbitmq = self._rabbitmq(context)
+        if rabbitmq is not None:
+            user = context.setting("RABBITMQ_USER", "app")
+            password = context.credential("RABBITMQ_PASSWORD", "ship")
+            broker = f"amqp://{user}:{password}@{rabbitmq}:5672//"
+        else:
+            broker = f"redis://{redis}:6379/1"
+        return {
+            "CELERY_APP": context.setting("CELERY_APP", self._celery_app(context)),
+            "CELERY_BROKER_URL": broker,
+            "CELERY_RESULT_BACKEND": f"redis://{redis}:6379/2" if redis else "rpc://",
+        }
+
+
 # Browsers force a single-label host such as "app" to HTTPS, so the app also gets this
 # network alias in development whenever a browser-testing service is selected.
 BROWSER_APP_HOST = "ship-app.test"
@@ -248,7 +338,8 @@ class NodeService:
 BUILTIN_SERVICES: dict[str, ServiceDefinition] = {
     service.key: service
     for service in (
-        PostgresService(), MySqlService(), RedisService(), MailpitService(), MeilisearchService(),
+        PostgresService(), MySqlService(), RedisService(), RabbitMQService(), CeleryService(), MailpitService(),
+        MeilisearchService(),
         SeleniumService(), PlaywrightService(), NodeService(), *BUILTIN_STORAGE,
     )
 }

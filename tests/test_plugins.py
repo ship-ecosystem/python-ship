@@ -32,6 +32,9 @@ class CommunityAdapter:
     def validate(self, config, root):
         return []
 
+    def interface(self, config, root):
+        return "asgi"
+
     def server_target(self, config):
         return config.app
 
@@ -43,13 +46,13 @@ class CommunityAdapter:
 
 
 class CommunityServer:
-    key, label, requirement = "granian", "Granian", "granian==2.6.0"
+    key, label, requirement, interfaces = "daphne", "Daphne", "daphne==4.2.1", ("asgi",)
 
-    def development_command(self, target):
-        return ["granian", "--interface", "asgi", "--reload", target]
+    def development_command(self, target, interface):
+        return ["daphne", "--bind", "0.0.0.0", "--port", "8000", target]
 
-    def production_command(self, target):
-        return ["granian", "--interface", "asgi", target]
+    def production_command(self, target, interface):
+        return ["daphne", "--bind", "0.0.0.0", "--port", "8000", "--proxy-headers", target]
 
 
 class LoaderTests(ProjectTestCase):
@@ -71,7 +74,7 @@ class LoaderTests(ProjectTestCase):
         registry = self.load(groups, "svc", "adp", "srv")
         self.assertIn("community", registry.services)
         self.assertIn("community", registry.adapters)
-        self.assertIn("granian", registry.servers)
+        self.assertIn("daphne", registry.servers)
         self.assertEqual([registry.services["community"]], registry.in_group("queue"))
 
     def test_community_extensions_build_both_models(self):
@@ -80,18 +83,18 @@ class LoaderTests(ProjectTestCase):
             "python_ship.adapters": [FakeEntryPoint("adp", CommunityAdapter)],
             "python_ship.servers": [FakeEntryPoint("srv", CommunityServer)],
         }
-        config = ShipConfig("community", "main:app", server="granian", services={"queue": "community"},
+        config = ShipConfig("community", "main:app", server="daphne", services={"queue": "community"},
                             extensions=["svc", "adp", "srv"])
         with entry_points_for(groups):
             development = build_compose(config, self.root)
             production = build_compose(config, self.root, production=True)
-        self.assertEqual(["granian", "--interface", "asgi", "--reload", "main:app"], development["services"]["app"]["command"])
-        self.assertEqual("granian==2.6.0", development["services"]["app"]["build"]["args"]["SHIP_SERVER_REQUIREMENT"])
+        self.assertEqual(["daphne", "--bind", "0.0.0.0", "--port", "8000", "main:app"], development["services"]["app"]["command"])
+        self.assertEqual("daphne==4.2.1", development["services"]["app"]["build"]["args"]["SHIP_SERVER_REQUIREMENT"])
         self.assertEqual("amqp://community", development["services"]["app"]["environment"]["QUEUE_URL"])
         self.assertIn("community_data", development["volumes"])
         self.assertNotIn("community", production["services"])
         self.assertNotIn("QUEUE_URL", production["services"]["app"]["environment"])
-        self.assertEqual(["sh", "-c", "python -m community warm && exec granian --interface asgi main:app"],
+        self.assertEqual(["sh", "-c", "python -m community warm && exec daphne --bind 0.0.0.0 --port 8000 --proxy-headers main:app"],
                          production["services"]["app"]["command"])
 
     def test_failures_are_configuration_errors(self):
@@ -123,6 +126,9 @@ class LoaderTests(ProjectTestCase):
         class BadKey(CommunityService):
             key = "Bad Key"
 
+        class NoInterfaces(CommunityServer):
+            interfaces = ("http",)
+
         class NoRequirement(CommunityServer):
             requirement = " "
 
@@ -135,10 +141,11 @@ class LoaderTests(ProjectTestCase):
             ({"python_ship.services": [FakeEntryPoint("x", BadGroup)]}, "x", "invalid service group"),
             ({"python_ship.services": [FakeEntryPoint("x", NotCallable)]}, "x", "missing: compose_fragment"),
             ({"python_ship.services": [FakeEntryPoint("x", BadOptional)]}, "x", "non-callable optional hooks: database_shell"),
-            ({"python_ship.adapters": [FakeEntryPoint("x", Incomplete)]}, "x", "missing: default_app, validate"),
+            ({"python_ship.adapters": [FakeEntryPoint("x", Incomplete)]}, "x", "missing: default_app, interface, validate"),
             ({"python_ship.services": [FakeEntryPoint("x", DuplicateKey)]}, "x", "reuses the service key 'redis'"),
             ({"python_ship.services": [FakeEntryPoint("x", BadKey)]}, "x", "invalid key"),
             ({"python_ship.servers": [FakeEntryPoint("x", NoRequirement)]}, "x", "PEP 508 requirement"),
+            ({"python_ship.servers": [FakeEntryPoint("x", NoInterfaces)]}, "x", "must declare interfaces"),
         )
         for groups, selected, message in cases:
             with self.subTest(message=message), self.assertRaisesRegex(ConfigError, message):
@@ -146,10 +153,14 @@ class LoaderTests(ProjectTestCase):
 
     def test_unknown_adapter_and_server_name_the_choices(self):
         registry = self.load({})
-        with self.assertRaisesRegex(ConfigError, "django, fastapi, generic"):
-            registry.adapter(ShipConfig("flask", "main:app"))
-        with self.assertRaisesRegex(ConfigError, "hypercorn, uvicorn"):
-            registry.server(ShipConfig(app="main:app", server="granian"))
+        with self.assertRaisesRegex(ConfigError, "django, fastapi, flask, generic"):
+            registry.adapter(ShipConfig("bottle", "main:app"))
+        with self.assertRaisesRegex(ConfigError, "granian, gunicorn, hypercorn, uvicorn"):
+            registry.server(ShipConfig(app="main:app", server="daphne"), "asgi")
+        with self.assertRaisesRegex(ConfigError, "use one of gunicorn, granian"):
+            registry.server(ShipConfig(app="main:app", server="uvicorn"), "wsgi")
+        self.assertEqual("uvicorn", registry.server(ShipConfig(app="main:app"), "asgi").key)
+        self.assertEqual("gunicorn", registry.server(ShipConfig(app="main:app"), "wsgi").key)
 
 
 class ConsoleCommandTests(unittest.TestCase):

@@ -10,7 +10,8 @@ from python_ship.services import BUILTIN_SERVICES
 from tests.helpers import ProjectTestCase
 
 GROUPS = {
-    "postgres": "database", "mysql": "database", "redis": "cache", "mailpit": "mail", "meilisearch": "search",
+    "postgres": "database", "mysql": "database", "redis": "cache", "rabbitmq": "broker", "celery": "tasks",
+    "mailpit": "mail", "meilisearch": "search",
     "selenium": "testing", "playwright": "testing", "node": "frontend",
     "garage": "storage", "seaweedfs": "storage", "rustfs": "storage", "silo": "storage",
 }
@@ -35,10 +36,10 @@ class CatalogTests(ProjectTestCase):
     def test_every_image_is_version_pinned(self):
         for key in BUILTIN_SERVICES:
             with self.subTest(key=key):
-                service, context = self.context(key)
+                service, context = self.context(key, config=ShipConfig(app="main:app", services={"cache": "redis"}))
                 image = service.compose_fragment(context)[key].get("image")
                 if image is None:
-                    self.assertEqual("garage", key)
+                    self.assertIn(key, ("garage", "celery"))  # Built locally, or the app's own image.
                     continue
                 tag = image.rsplit(":", 1)[1]
                 self.assertNotIn(tag, {"latest", ""})
@@ -47,11 +48,11 @@ class CatalogTests(ProjectTestCase):
     def test_development_only_services_vanish_in_production(self):
         for key in BUILTIN_SERVICES:
             with self.subTest(key=key):
-                service, context = self.context(key, production=True)
+                service, context = self.context(key, production=True, config=ShipConfig(app="main:app", services={"cache": "redis"}))
                 self.assertEqual(key in DEVELOPMENT_ONLY, service.compose_fragment(context) == {})
 
     def test_stateful_services_use_named_volumes_and_healthchecks(self):
-        for key in ("postgres", "mysql", "redis", "meilisearch", "garage", "seaweedfs", "rustfs", "silo"):
+        for key in ("postgres", "mysql", "redis", "rabbitmq", "meilisearch", "garage", "seaweedfs", "rustfs", "silo"):
             with self.subTest(key=key):
                 service, context = self.context(key)
                 model = service.compose_fragment(context)[key]
@@ -60,7 +61,7 @@ class CatalogTests(ProjectTestCase):
 
     def test_secrets_are_required_in_production_and_defaulted_in_development(self):
         secrets = {"postgres": ["DB_PASSWORD"], "mysql": ["DB_PASSWORD", "DB_ROOT_PASSWORD"],
-                   "meilisearch": ["MEILISEARCH_KEY"], "seaweedfs": ["AWS_SECRET_ACCESS_KEY"],
+                   "meilisearch": ["MEILISEARCH_KEY"], "rabbitmq": ["RABBITMQ_PASSWORD"], "seaweedfs": ["AWS_SECRET_ACCESS_KEY"],
                    "rustfs": ["AWS_SECRET_ACCESS_KEY"], "silo": ["AWS_SECRET_ACCESS_KEY"],
                    "garage": ["AWS_SECRET_ACCESS_KEY", "GARAGE_RPC_SECRET", "GARAGE_ADMIN_TOKEN"]}
         for key, variables in secrets.items():
@@ -130,6 +131,83 @@ class CatalogTests(ProjectTestCase):
         self.assertEqual("development", service.compose_fragment(context)["meilisearch"]["environment"]["MEILI_ENV"])
         _, production = self.context("meilisearch", production=True)
         self.assertEqual("production", service.compose_fragment(production)["meilisearch"]["environment"]["MEILI_ENV"])
+
+    def test_rabbitmq(self):
+        service, context = self.context("rabbitmq")
+        model = service.compose_fragment(context)["rabbitmq"]
+        self.assertTrue(model["image"].startswith("rabbitmq:4."))
+        self.assertEqual(["127.0.0.1:${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"], model["ports"])
+        self.assertEqual({"AMQP_URL": "amqp://${RABBITMQ_USER:-app}:${RABBITMQ_PASSWORD:-ship}@rabbitmq:5672//"},
+                         service.app_environment(context))
+        _, production = self.context("rabbitmq", production=True)
+        self.assertNotIn("ports", service.compose_fragment(production)["rabbitmq"])
+
+    def test_celery_brokers_and_result_backends(self):
+        amqp = "amqp://${RABBITMQ_USER:-app}:${RABBITMQ_PASSWORD:-ship}@rabbitmq:5672//"
+        cases = (
+            ({"cache": "redis"}, "redis://redis:6379/1", "redis://redis:6379/2"),
+            ({"broker": "rabbitmq"}, amqp, "rpc://"),
+            ({"broker": "rabbitmq", "cache": "redis"}, amqp, "redis://redis:6379/2"),
+        )
+        for services, broker, backend in cases:
+            with self.subTest(services=services):
+                config = ShipConfig(app="main:app", services={**services, "tasks": "celery"})
+                service, context = self.context("celery", config=config)
+                environment = service.app_environment(context)
+                self.assertEqual(broker, environment["CELERY_BROKER_URL"])
+                self.assertEqual(backend, environment["CELERY_RESULT_BACKEND"])
+                self.assertEqual("${CELERY_APP:-main}", environment["CELERY_APP"])
+                self.assertEqual([], service.validate(context))
+        service, context = self.context("celery", config=ShipConfig(app="main:app", services={"tasks": "celery"}))
+        self.assertIn("needs a broker", service.validate(context)[0])
+        renamed = ShipConfig(app="main:app", services={"cache": "redis", "tasks": "celery"}, service_names={"redis": "kv"})
+        service, context = self.context("celery", config=renamed)
+        self.assertEqual("redis://kv:6379/1", service.app_environment(context)["CELERY_BROKER_URL"])
+
+    def test_celery_app_defaults_per_framework(self):
+        for framework, target, expected in (("django", "project.asgi:application", "project"),
+                                            ("fastapi", "app.main:app", "app.main"), ("generic", "main:app", "main")):
+            with self.subTest(framework=framework):
+                config = ShipConfig(framework, target, services={"cache": "redis", "tasks": "celery"})
+                service, context = self.context("celery", config=config)
+                self.assertEqual("${CELERY_APP:-" + expected + "}", service.app_environment(context)["CELERY_APP"])
+
+    def test_celery_runs_worker_and_beat_from_the_app_image(self):
+        config = ShipConfig(app="main:app", services={"cache": "redis", "tasks": "celery"}, processes={"other": "true"})
+        for production in (False, True):
+            with self.subTest(production=production):
+                model = self.model(config, production=production)
+                services = model["services"]
+                for name in ("celery", "celery-beat"):
+                    self.assertEqual(services["app"]["image"], services[name]["image"])
+                    self.assertNotIn("build", services[name])
+                    self.assertNotIn("ports", services[name])
+                    self.assertEqual("60s", services[name]["stop_grace_period"])
+                    self.assertIn("redis", services[name]["depends_on"])
+                    self.assertEqual("redis://redis:6379/1", services[name]["environment"]["CELERY_BROKER_URL"])
+                self.assertEqual(["app", "other", "celery", "celery-beat"], model["x-ship"]["app_services"])
+                self.assertNotIn("celery", services["app"].get("depends_on", {}))
+                worker = services["celery"]["command"][2]
+                self.assertIn("-A $${CELERY_APP} worker", worker)
+                self.assertEqual(not production, "watchfiles" in worker)
+                self.assertIn("beat --loglevel=$${CELERY_LOG_LEVEL:-info} --schedule /tmp/", services["celery-beat"]["command"][2])
+                self.assertEqual([".:/app"] if not production else None, services["celery"].get("volumes"))
+        with self.assertRaisesRegex(ConfigError, "needs a broker"):
+            self.model(ShipConfig(app="main:app", services={"tasks": "celery"}))
+
+    def test_postgres_aliases(self):
+        (self.root / "ship.json").write_text(
+            '{"app": "main:app", "services": {"database": "pgsql"}, "serviceNames": {"pgsql": "db"},'
+            ' "additionalServices": [{"group": "database", "service": "pgsql", "name": "reports"}]}')
+        config = ShipConfig.read(self.root)
+        self.assertEqual({"database": "postgres"}, config.services)
+        self.assertEqual("postgres", config.additional_services[0].service)
+        self.assertEqual({"postgres": "db"}, config.service_names)
+        model = self.model(config)
+        self.assertEqual("db", model["services"]["app"]["environment"]["DB_HOST"])
+        self.assertIn("postgres-reports", model["services"])
+        config.write(self.root)
+        self.assertIn('"database": "postgres"', (self.root / "ship.json").read_text())
 
     def test_browser_services(self):
         service, context = self.context("selenium")

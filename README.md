@@ -8,9 +8,14 @@ a separate contract.
 
 ## Install
 
-The standalone uv executable does not require a preinstalled Python. From
-this checkout, uv can install the Ship CLI with an isolated Python that it
-manages:
+The standalone uv executable does not require a preinstalled Python. Install
+the published Ship CLI with an isolated Python that uv manages:
+
+```sh
+uv tool install --python 3.13 python-ship
+```
+
+To install an unreleased checkout instead, run this from the repository root:
 
 ```sh
 uv tool install --python 3.13 .
@@ -26,8 +31,6 @@ python -m pip install -e .
 The distribution name is `python-ship`, the import name is `python_ship`, and
 the installed command is `ship`. The repository is
 [`ship-ecosystem/python-ship`](https://github.com/ship-ecosystem/python-ship).
-The pending PyPI publisher will create the project on the first successful
-upload; this version is not published yet.
 
 Read the [quick start](docs/quickstart.md), [command reference](docs/commands.md),
 [configuration guide](docs/configuration.md), [operations guide](docs/operations.md),

@@ -7,9 +7,9 @@ Docker with the Compose plugin is required for app commands.
 
 ## Install the CLI
 
-From this checkout, run `uv tool install --python 3.13 .`. Then check
-`ship --help`. A pending PyPI publisher is configured; the checkout is the
-installation source until the first upload.
+Run `uv tool install --python 3.13 python-ship`, then check `ship --help`.
+For an unreleased checkout, run `uv tool install --python 3.13 .` from the
+repository root instead.
 
 `ship init` needs uv on the host. If it cannot find uv, it asks permission to
 install it and stops without changing the project if the answer is no or the

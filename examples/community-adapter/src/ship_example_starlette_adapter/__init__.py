@@ -1,37 +1,39 @@
-"""A host-side Starlette adapter; Starlette itself lives in the app image."""
+"""A host-side Starlette adapter; Starlette itself is a dependency of the app image."""
 
 from pathlib import Path
 import re
 
+from python_ship.adapters import target_problems
+from python_ship.config import ShipConfig
+
 
 class ExampleStarletteAdapter:
     key = "example-starlette"
+    label = "Starlette (example adapter)"
 
     def detect(self, project_root: Path) -> bool:
         requirements = project_root / "requirements.txt"
         return requirements.is_file() and "starlette" in requirements.read_text(encoding="utf-8").lower()
 
-    def validate(self, config, project_root: Path) -> list[str]:
-        if not re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*", config.app):
-            return ["Starlette app must use a module:callable target, such as main:app."]
-        module = project_root.joinpath(*config.app.partition(":")[0].split(".")).with_suffix(".py")
-        if not module.is_file():
-            return [f"Starlette app module {module.relative_to(project_root)} is missing."]
+    def default_app(self, project_root: Path) -> str | None:
+        source = project_root / "main.py"
+        if source.is_file() and re.search(r"^app\s*=\s*Starlette\(", source.read_text(encoding="utf-8"), re.MULTILINE):
+            return "main:app"
+        return None
+
+    def validate(self, config: ShipConfig, project_root: Path) -> list[str]:
+        problems = target_problems(project_root, config.app, "Starlette app", "main:app")
         if not self.detect(project_root):
-            return ["Starlette adapter requires starlette in requirements.txt."]
-        return []
+            problems.append("The Starlette adapter requires starlette in requirements.txt.")
+        return problems
 
-    def development_command(self, config) -> list[str]:
-        return ["python", "-m", "uvicorn", config.app, "--host", "0.0.0.0", "--port", "8000", "--reload"]
-
-    def production_command(self, config) -> list[str]:
-        return ["python", "-m", "uvicorn", config.app, "--host", "0.0.0.0", "--port", "8000", "--lifespan", "on"]
-
-    def production_startup_commands(self, config) -> list[list[str]]:
-        return [["python", "-c", "import starlette"]]
+    def server_target(self, config: ShipConfig) -> str:
+        return config.app
 
     def console_commands(self) -> dict[str, list[str]]:
-        return {}
+        # Becomes `ship routes`, run in the app container.
+        return {"routes": ["python", "-c", "import main; print('\\n'.join(r.path for r in main.app.routes))"]}
 
-    def release_commands(self, config) -> list[list[str]]:
-        return []
+    def release_commands(self, config: ShipConfig) -> list[list[str]]:
+        # Fail the production boot early if the app can't be imported.
+        return [["python", "-c", f"import {config.app.split(':')[0]}"]]

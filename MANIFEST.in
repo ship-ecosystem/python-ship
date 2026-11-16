@@ -1,0 +1,8 @@
+graft tests
+graft docs
+graft examples
+include CHANGELOG.md
+global-exclude __pycache__ *.py[cod] .DS_Store
+prune examples/*/build
+prune examples/*/dist
+prune examples/*/src/*.egg-info

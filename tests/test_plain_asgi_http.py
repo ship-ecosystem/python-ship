@@ -1,8 +1,8 @@
 """A plain Python callable must serve HTTP through Ship's default server."""
 
-from pathlib import Path
 import asyncio
 import importlib.util
+from pathlib import Path
 import socket
 import subprocess
 import sys
@@ -10,7 +10,6 @@ import time
 import unittest
 from urllib.error import URLError
 from urllib.request import urlopen
-
 
 FIXTURE = Path(__file__).parent / "fixtures" / "plain_asgi"
 

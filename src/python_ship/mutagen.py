@@ -9,11 +9,10 @@ import time
 
 from .config import ConfigError
 
-
 IGNORES = (
     ".venv", "venv", "node_modules", "__pycache__", ".pytest_cache",
     ".mypy_cache", ".ruff_cache", ".tox", "dist", "build",
-    "*.egg-info", ".env", ".env.*", "ship/compose.generated.json",
+    "*.egg-info", ".env", ".env.*", "ship/docker-compose.*.yml", "dist/ship",
 )
 
 

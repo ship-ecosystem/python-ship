@@ -1,21 +1,28 @@
 # Example Starlette adapter
 
-This independently installable distribution registers `example-starlette` in
-`python_ship.adapters`. Install it in the same environment as the `ship` CLI;
-the application declares `starlette` in its own `requirements.txt`, so the
-Docker image can run without the host-side adapter package.
+An independently installable distribution that registers `example-starlette`
+in the `python_ship.adapters` entry point group, without any change to Ship
+itself. Install it into the same environment as the `ship` command:
 
-Select it in `ship.json`:
+```sh
+uv tool install python-ship --with ./examples/community-adapter
+```
+
+The app declares `starlette` in its own `requirements.txt`, so the Docker image
+runs without this host-side package. Select the adapter in `ship.json`:
 
 ```json
 {
-  "framework": "example-starlette",
-  "app": "main:app",
-  "extensions": ["example-starlette"]
+    "framework": "example-starlette",
+    "app": "main:app",
+    "extensions": ["example-starlette"]
 }
 ```
 
-The adapter validates its import target and dependency declaration, enables
-reload in development, and uses Uvicorn's explicit lifespan mode in
-production after checking that Starlette imports. No core Ship source changes
-are needed to load it.
+It shows each adapter hook:
+
+- `detect()` and `default_app()` let `ship init` pick it and suggest `main:app`.
+- `validate()` checks the import target and the dependency declaration.
+- `console_commands()` adds `ship routes`, run in the app container.
+- `release_commands()` imports the app at every production boot, before the
+  server starts.

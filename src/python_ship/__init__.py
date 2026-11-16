@@ -1,3 +1,3 @@
-"""Docker orchestration for Python web applications."""
+"""Docker development environments and portable releases for Python web apps."""
 
-__version__ = "0.1.0.dev5"
+__version__ = "0.1.0"

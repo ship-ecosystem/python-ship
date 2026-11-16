@@ -1,0 +1,6 @@
+# A Windows checkout (core.autocrlf=true) would otherwise turn every file into CRLF,
+# including the Dockerfile template and deploy scripts that must stay LF.
+* text=auto eol=lf
+
+/.github export-ignore
+/.gitattributes export-ignore

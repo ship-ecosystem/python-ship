@@ -1,93 +1,118 @@
-"""Generate Compose models from framework and service extensions."""
+"""Generate the development and production Compose models from ship.json."""
+
+from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 import re
-import os
 import shlex
 import sys
 from typing import Any
 
-from .config import ConfigError, ShipConfig
-from .contracts import ServiceDefinition
-from .plugins import load_extensions, load_servers
+from . import __version__
+from .config import ConfigError, ShipConfig, command_argv
+from .contracts import ServiceContext, ServiceDefinition, ShipEnvironment
 from .mutagen import enabled as mutagen_enabled
+from .plugins import Registry, load_extensions
+from .security import build_arg as python_floor
+from .services import BROWSER_APP_HOST
+
+DEVELOPMENT_FILE = "docker-compose.generated.yml"
+PRODUCTION_FILE = "docker-compose.production.yml"
+SERVICE_NAME = re.compile(r"[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*")
+PROCESS_STOP_GRACE = "60s"
 
 
-def selected_services(config: ShipConfig, services: dict[str, ServiceDefinition]) -> list[tuple[str, ServiceDefinition, dict[str, str]]]:
-    """Resolve legacy selections and additional named instances."""
-    selected = []
-    names = {"app"}
-    prefixes = set()
+@dataclass(frozen=True)
+class Selection:
+    """One selected service: the default of its group, or a named additional instance."""
+
+    service: ServiceDefinition
+    group: str
+    instance_name: str | None
+    service_name: str
+
+    def context(self, config: ShipConfig, root: Path, environment: ShipEnvironment) -> ServiceContext:
+        return ServiceContext(environment, config, root, self.service.key, self.instance_name, self.service_name)
+
+
+def resolve_selections(config: ShipConfig, registry: Registry) -> list[Selection]:
+    """Every selected service with its final Compose name, rejecting unknown or colliding ones."""
+    problems = selection_problems(config, registry)
+    if problems:
+        raise ConfigError(" ".join(problems))
+    return _selections(config, registry)
+
+
+def _selections(config: ShipConfig, registry: Registry) -> list[Selection]:
+    selections = []
     for group, key in config.services.items():
-        service = services.get(key)
-        if service is None or service.group != group:
-            raise ConfigError(f"Unknown service {key!r} in group {group!r}.")
-        if key in names:
-            raise ConfigError(f"Duplicate Compose service {key!r}.")
-        names.add(key)
-        selected.append((group, service, {"group": group, "service": key, "name": key, "prefix": ""}))
-    for instance_id, raw in config.instances.items():
-        if not isinstance(raw, dict):
-            raise ConfigError(f"Instance {instance_id!r} must be an object.")
-        instance_group, instance_key = raw.get("group"), raw.get("service")
-        if not isinstance(instance_group, str) or not isinstance(instance_key, str):
-            raise ConfigError(f"Instance {instance_id!r} requires a service group and key.")
-        service = services.get(instance_key)
-        if service is None or service.group != instance_group:
-            raise ConfigError(f"Unknown service {instance_key!r} in group {instance_group!r} for instance {instance_id!r}.")
-        name = raw.get("name", instance_id)
-        prefix = raw.get("prefix", instance_id.upper().replace("-", "_"))
-        network: str | None = raw.get("network")
-        if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*", name):
-            raise ConfigError(f"Invalid Compose service name {name!r} for instance {instance_id!r}.")
-        if name in names:
-            raise ConfigError(f"Duplicate Compose service {name!r}.")
-        if not isinstance(prefix, str) or not re.fullmatch(r"[A-Z][A-Z0-9_]*", prefix):
-            raise ConfigError(f"Invalid environment prefix {prefix!r} for instance {instance_id!r}.")
-        if prefix in prefixes:
-            raise ConfigError(f"Duplicate environment prefix {prefix!r}.")
-        if network is not None and network not in config.networks:
-            raise ConfigError(f"Unknown external network alias {network!r} for instance {instance_id!r}.")
-        names.add(name)
-        prefixes.add(prefix)
-        spec = {"group": instance_group, "service": instance_key, "name": name, "prefix": prefix}
-        if network:
-            spec["network"] = network
-        selected.append((instance_id, service, spec))
-    return selected
+        service = registry.services.get(key)
+        if service is not None and service.group == group:
+            selections.append(Selection(service, group, None, config.service_names.get(key, key)))
+    for entry in config.additional_services:
+        service = registry.services.get(entry.service)
+        if service is not None and service.group == entry.group:
+            selections.append(Selection(service, entry.group, entry.name, f"{entry.service}-{entry.name}"))
+    return selections
 
 
-def _merge(base: dict, fragment: dict, location: str) -> None:
-    """Add extension values without silently discarding existing settings."""
+def selection_problems(config: ShipConfig, registry: Registry) -> list[str]:
+    problems = []
+    for group, key in config.services.items():
+        service = registry.services.get(key)
+        if service is None:
+            problems.append(f"Unknown service {key!r} in group {group!r}.")
+        elif service.group != group:
+            problems.append(f"Service {key!r} belongs to the {service.group!r} group, not {group!r}.")
+    for entry in config.additional_services:
+        service = registry.services.get(entry.service)
+        if service is None:
+            problems.append(f"Unknown service {entry.service!r} in additional instance {entry.name!r}.")
+        elif service.group != entry.group:
+            problems.append(
+                f"Additional instance {entry.name!r}: {entry.service!r} belongs to the "
+                f"{service.group!r} group, not {entry.group!r}."
+            )
+    renamable = {"app", *config.services.values()}
+    for old in config.service_names:
+        if old not in renamable:
+            problems.append(
+                f"ship.json \"serviceNames\" renames {old!r}, which is not \"app\" or a selected service."
+            )
+    names: dict[str, str] = {config.app_service: "the app"}
+    for selection in _selections(config, registry):
+        owner = names.get(selection.service_name)
+        if owner is not None:
+            problems.append(f"Compose service name {selection.service_name!r} is used by both {owner} and {selection.service.key!r}.")
+        names[selection.service_name] = repr(selection.service.key)
+    for process in config.processes:
+        if process in names:
+            problems.append(f"Process {process!r} conflicts with the Compose service of {names[process]}.")
+    return problems
+
+
+def _merge(base: dict[str, Any], fragment: dict[str, Any], location: str) -> None:
+    """Add a fragment's values without silently discarding existing settings."""
     if not isinstance(fragment, dict):
         raise ConfigError(f"{location} must be a Compose object.")
     for key, value in fragment.items():
         path = f"{location}.{key}"
         if key not in base:
-            base[key] = value
+            base[key] = deepcopy(value)
         elif isinstance(base[key], dict) and isinstance(value, dict):
             _merge(base[key], value, path)
         elif isinstance(base[key], list) and isinstance(value, list):
-            base[key].extend(item for item in value if item not in base[key])
+            base[key].extend(deepcopy(item) for item in value if item not in base[key])
         elif base[key] != value:
             raise ConfigError(f"Conflicting Compose value at {path}.")
 
 
-def _replace_strings(value, replacements: dict[str, str]):
-    if isinstance(value, str):
-        for old, new in replacements.items():
-            value = value.replace(old, new)
-        return value
-    if isinstance(value, list):
-        return [_replace_strings(item, replacements) for item in value]
-    if isinstance(value, dict):
-        return {key: _replace_strings(item, replacements) for key, item in value.items()}
-    return value
-
-
-def _local_ports(ports: list, service_name: str) -> list:
+def _local_ports(ports: list[Any], service_name: str) -> list[Any]:
+    """Development ports bind 127.0.0.1 unless a host address is given explicitly."""
     localized: list[Any] = []
     for port in ports:
         if isinstance(port, dict):
@@ -96,10 +121,11 @@ def _local_ports(ports: list, service_name: str) -> list:
             localized.append({"target": port, "host_ip": "127.0.0.1"})
         elif isinstance(port, str):
             endpoint, separator, protocol = port.partition("/")
-            if re.fullmatch(r"\d+:\d+", endpoint):
+            if endpoint.count(":") == 1 and not endpoint.startswith("["):
                 endpoint = "127.0.0.1:" + endpoint
-            elif re.fullmatch(r"\d+", endpoint):
-                localized.append({"target": int(endpoint), "host_ip": "127.0.0.1", **({"protocol": protocol} if separator else {})})
+            elif endpoint.isdigit():
+                localized.append({"target": int(endpoint), "host_ip": "127.0.0.1",
+                                  **({"protocol": protocol} if separator else {})})
                 continue
             localized.append(endpoint + (separator + protocol if separator else ""))
         else:
@@ -107,219 +133,245 @@ def _local_ports(ports: list, service_name: str) -> list:
     return localized
 
 
-def _service_parts(service, config: ShipConfig, spec: dict[str, str], *, production: bool = False) -> tuple[dict, dict]:
-    context = {**spec, "_production": production}
-    try:
-        fragment = service.compose_fragment_for(config, context) if hasattr(service, "compose_fragment_for") else service.compose_fragment()
-        environment = service.app_environment_for(config, context) if hasattr(service, "app_environment_for") else service.app_environment()
-    except Exception as exc:
-        raise ConfigError(f"Service {service.key!r} failed to build its Compose fragment: {exc}") from exc
-    if not isinstance(fragment, dict) or not isinstance(environment, dict):
-        raise ConfigError(f"Service {service.key!r} must return Compose and environment objects.")
-    fragment, environment = deepcopy(fragment), deepcopy(environment)
-    # A legacy plugin can still be instantiated under another service name.
-    if not hasattr(service, "compose_fragment_for") and spec["name"] != service.key:
-        old_names = [name for name in fragment if name != "app"]
-        rename = {name: spec["name"] if name == service.key else f"{spec['name']}-{name}" for name in old_names}
-        replacements = {f"//{old}:": f"//{new}:" for old, new in rename.items()}
-        replacements.update({f"//{old}/": f"//{new}/" for old, new in rename.items()})
-        fragment = {rename.get(name, name): _replace_strings(model, replacements) for name, model in fragment.items()}
-        environment = _replace_strings(environment, replacements)
-        environment = {key: rename.get(value, value) for key, value in environment.items()}
-        for model in fragment.values():
-            if not isinstance(model, dict):
-                continue
-            if isinstance(model.get("depends_on"), dict):
-                model["depends_on"] = {rename.get(key, key): value for key, value in model["depends_on"].items()}
-            if isinstance(model.get("volumes"), list):
-                mounts = []
-                for mount in model["volumes"]:
-                    if not isinstance(mount, str) or ":" not in mount:
-                        mounts.append(mount)
-                        continue
-                    source, rest = mount.split(":", 1)
-                    if source.startswith((".", "/", "~")):
-                        mounts.append(mount)
-                    else:
-                        source = source.replace(service.key, spec["name"], 1) if source.startswith(service.key) else f"{spec['name']}_{source}"
-                        mounts.append(source + ":" + rest)
-                model["volumes"] = mounts
-    if spec["prefix"]:
-        prefix = spec["prefix"] + "_"
-        environment = {prefix + key: value for key, value in environment.items()}
-        fragment = _replace_strings(fragment, {"${DB_": "${" + prefix + "DB_"})
-        environment = _replace_strings(environment, {"${DB_": "${" + prefix + "DB_"})
-    return fragment, environment
+def project_name(config: ShipConfig, project_root: Path) -> str:
+    """``name`` from ship.json, or a sanitized form of the project directory's name."""
+    if config.name:
+        return config.name
+    name = re.sub(r"[^a-z0-9]+", "-", project_root.resolve().name.lower()).strip("-")
+    if not name or not name[0].isalpha():
+        name = "ship-" + name if name else "ship"
+    return name
 
 
-def build_compose(config: ShipConfig, project_root: Path, *, production: bool = False) -> dict:
-    if config.silo_image not in ("distroless", "standard"):
-        raise ConfigError("ship.json silo_image must be 'distroless' or 'standard'.")
-    adapters, services = load_extensions(config)
-    server = load_servers(config).get(config.server)
-    if server is None:
-        raise ConfigError(f"Unknown ASGI server {config.server!r}; select an installed python_ship.servers extension or use uvicorn/hypercorn.")
-    if not isinstance(server.requirement, str) or not server.requirement:
-        raise ConfigError(f"ASGI server {config.server!r} has no package requirement.")
-    adapter = adapters.get(config.framework)
-    if adapter is None:
-        raise ConfigError(f"Unknown framework adapter {config.framework!r}.")
+def _command_list(value: Any, what: str) -> list[str]:
+    if not isinstance(value, list) or not value or any(not isinstance(part, str) or not part for part in value):
+        raise ConfigError(f"{what} must be a nonempty list of strings.")
+    return value
+
+
+def _escape_dollars(argv: list[str]) -> list[str]:
+    # Compose interpolates $VAR in a service's command; a shell variable meant for the container
+    # would otherwise be blanked out silently.
+    return [part.replace("$", "$$") for part in argv]
+
+
+def _app_command(config: ShipConfig, root: Path, registry: Registry, environment: ShipEnvironment) -> list[str]:
+    adapter = registry.adapter(config)
+    server = registry.server(config)
     try:
-        problems = adapter.validate(config, project_root)
+        target = adapter.server_target(config)
     except Exception as exc:
-        raise ConfigError(f"Adapter {config.framework!r} validation failed: {exc}") from exc
+        raise ConfigError(f"Adapter {adapter.key!r} could not provide an ASGI target: {exc}") from exc
+    if not isinstance(target, str) or not target:
+        raise ConfigError(f"Adapter {adapter.key!r} returned an invalid ASGI target.")
+    try:
+        command = server.production_command(target) if environment.is_production else server.development_command(target)
+    except Exception as exc:
+        raise ConfigError(f"ASGI server {server.key!r} command failed: {exc}") from exc
+    command = _command_list(command, f"ASGI server {server.key!r} command")
+    if environment.is_production:
+        try:
+            release = adapter.release_commands(config)
+        except Exception as exc:
+            raise ConfigError(f"Adapter {adapter.key!r} release commands failed: {exc}") from exc
+        if not isinstance(release, list):
+            raise ConfigError(f"Adapter {adapter.key!r} release_commands() must return a list.")
+        steps = [shlex.join(_command_list(step, f"Adapter {adapter.key!r} release command")) for step in release]
+        if steps:
+            command = ["sh", "-c", " && ".join([*steps, "exec " + shlex.join(command)]).replace("$", "$$")]
+    return command
+
+
+def adapter_problems(config: ShipConfig, root: Path, registry: Registry) -> list[str]:
+    try:
+        adapter = registry.adapter(config)
+    except ConfigError as exc:
+        return [str(exc)]
+    try:
+        problems = adapter.validate(config, root)
+    except Exception as exc:
+        return [f"Adapter {adapter.key!r} validation failed: {exc}"]
     if not isinstance(problems, list) or any(not isinstance(problem, str) for problem in problems):
-        raise ConfigError(f"Adapter {config.framework!r} returned invalid validation results.")
+        return [f"Adapter {adapter.key!r} returned invalid validation results."]
+    return problems
+
+
+def build_compose(config: ShipConfig, project_root: Path, *, production: bool = False,
+                  registry: Registry | None = None) -> dict[str, Any]:
+    environment = ShipEnvironment.PRODUCTION if production else ShipEnvironment.DEVELOPMENT
+    registry = registry or load_extensions(config)
+    problems = adapter_problems(config, project_root, registry)
     if problems:
         raise ConfigError(" ".join(problems))
-    name = config.name or re.sub(r"[^a-z0-9]+", "-", project_root.name.lower()).strip("-")
-    if not name or not name[0].isalpha():
-        name = "ship-" + name
-    if not re.fullmatch(r"[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*", name):
-        raise ConfigError(f"Invalid Compose project name {name!r}.")
+    selections = resolve_selections(config, registry)
+    server = registry.server(config)
+    name = project_name(config, project_root)
     if production:
         name += "-production"
-    try:
-        if hasattr(adapter, "server_target"):
-            target = adapter.server_target(config)
-            if not isinstance(target, str) or not target:
-                raise ConfigError(f"Adapter {config.framework!r} returned an invalid ASGI server target.")
-            command = server.production_command(target) if production else server.development_command(target)
-        elif config.server == "uvicorn":
-            command = adapter.production_command(config) if production else adapter.development_command(config)
-        else:
-            raise ConfigError(f"Adapter {config.framework!r} does not support selectable ASGI servers.")
-    except Exception as exc:
-        raise ConfigError(f"Adapter {config.framework!r} command failed: {exc}") from exc
-    if not isinstance(command, list) or not command or any(not isinstance(part, str) or not part for part in command):
-        raise ConfigError(f"Adapter {config.framework!r} returned an invalid command.")
-    if production:
-        try:
-            startup: list[list[str]] = getattr(adapter, "production_startup_commands", lambda config: [])(config)
-        except Exception as exc:
-            raise ConfigError(f"Adapter {config.framework!r} production startup commands failed: {exc}") from exc
-        if not isinstance(startup, list) or any(
-            not isinstance(parts, list) or not parts or any(not isinstance(part, str) or not part for part in parts)
-            for parts in startup
-        ):
-            raise ConfigError(f"Adapter {config.framework!r} returned invalid production startup commands.")
-        if startup:
-            command = ["sh", "-c", " && ".join([*(shlex.join(parts) for parts in startup), "exec " + shlex.join(command)])]
+    app_name = config.app_service
+
     app: dict[str, Any] = {
-        "build": {"context": ".", "dockerfile": "ship/Dockerfile", "target": "production" if production else "development", "args": {"PYTHON_VERSION": config.python, "SHIP_SERVER_REQUIREMENT": server.requirement}},
-        "command": command,
+        "build": {
+            "context": ".",
+            "dockerfile": "ship/Dockerfile",
+            "target": environment.value,
+            "args": {
+                "PYTHON_VERSION": config.python,
+                "SHIP_PYTHON_FLOOR": python_floor(),
+                "SHIP_SERVER_REQUIREMENT": server.requirement,
+            },
+        },
+        "command": _app_command(config, project_root, registry, environment),
         "working_dir": "/app",
-        "env_file": [{"path": ".env.production", "required": False}] if production else [{"path": ".env", "required": False}],
+        "env_file": [{"path": ".env.production" if production else ".env", "required": False}],
         "environment": {},
         "restart": "unless-stopped",
     }
-    if not production:
+    if production:
+        # Never build a release on a stale, locally cached base image.
+        app["build"]["pull"] = True
+        if config.publish_ports:
+            app["ports"] = ["${APP_PORT:-8000}:8000"]
+    else:
         if not mutagen_enabled():
             app["volumes"] = [".:/app"]
-        app["ports"] = ["127.0.0.1:${SHIP_APP_PORT:-8000}:8000"]
-        if not mutagen_enabled() and sys.platform.startswith("linux") and hasattr(os, "getuid"):
-            app["user"] = f"{os.getuid()}:{os.getgid()}"
-    elif config.publish_ports:
-        app["ports"] = ["${SHIP_PRODUCTION_PORT:-8000}:8000"]
-    compose: dict[str, Any] = {"name": name, "services": {"app": app}}
+        app["ports"] = ["127.0.0.1:${APP_PORT:-8000}:8000"]
+        # Lets a debugger in the container (debugpy) reach the IDE on the host.
+        app["extra_hosts"] = ["host.docker.internal:host-gateway"]
+        user = host_user(config)
+        if user:
+            app["user"] = user
+
+    services: dict[str, Any] = {app_name: app}
+    compose: dict[str, Any] = {"name": name, "services": services}
     volumes: dict[str, None] = {}
-    extra_networks = set()
-    selections = selected_services(config, services)
-    for instance_id, service, spec in selections:
-        if production and getattr(service, "development_only", False):
-            continue
+
+    for selection in selections:
+        context = selection.context(config, project_root, environment)
+        service = selection.service
         validate = getattr(service, "validate", None)
         if validate is not None:
             try:
-                issues = validate(config, spec, project_root)
+                issues = validate(context)
             except Exception as exc:
                 raise ConfigError(f"Service {service.key!r} validation failed: {exc}") from exc
             if issues:
                 raise ConfigError(" ".join(issues))
-        fragment, environment = _service_parts(service, config, spec, production=production)
-        own_names = set(fragment) - {"app"}
-        if spec["name"] not in own_names:
-            raise ConfigError(f"Service {service.key!r} did not define its selected Compose name {spec['name']!r}.")
-        for service_name, model in fragment.items():
-            if not isinstance(service_name, str) or not re.fullmatch(r"[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*", service_name):
+        try:
+            fragment = service.compose_fragment(context)
+            variables = service.app_environment(context) if fragment else {}
+        except Exception as exc:
+            raise ConfigError(f"Service {service.key!r} failed to build its Compose fragment: {exc}") from exc
+        if not isinstance(fragment, dict) or not isinstance(variables, dict):
+            raise ConfigError(f"Service {service.key!r} must return a Compose mapping and an environment mapping.")
+        if not fragment:
+            continue  # Absent in this environment, as development-only services are in production.
+        if selection.service_name not in fragment:
+            raise ConfigError(f"Service {service.key!r} did not define its Compose service {selection.service_name!r}.")
+        for service_name, model in deepcopy(fragment).items():
+            target_name = app_name if service_name == "app" else service_name
+            if not isinstance(service_name, str) or not SERVICE_NAME.fullmatch(service_name):
                 raise ConfigError(f"Invalid Compose service name {service_name!r} from {service.key!r}.")
             if not isinstance(model, dict):
                 raise ConfigError(f"Compose service {service_name!r} must be an object.")
             if "ports" in model:
                 if not isinstance(model["ports"], list):
                     raise ConfigError(f"Compose service {service_name!r} ports must be a list.")
-                model["ports"] = _local_ports(model["ports"], service_name)
+                if environment.is_development:
+                    model["ports"] = _local_ports(model["ports"], service_name)
+                elif not config.publish_ports:
+                    model.pop("ports")
             mounts = model.get("volumes", [])
             if not isinstance(mounts, list):
                 raise ConfigError(f"Compose service {service_name!r} volumes must be a list.")
             for mount in mounts:
                 if isinstance(mount, str):
                     source = mount.split(":", 1)[0]
-                    if not source.startswith((".", "/", "~")):
+                    if not source.startswith((".", "/", "~", "$")):
                         volumes[source] = None
-            if service_name == "app":
-                _merge(app, model, f"services.app from {instance_id}")
+            if target_name == app_name:
+                try:
+                    _merge(app, model, f"services.{app_name}")
+                except ConfigError as exc:
+                    raise ConfigError(f"{exc} (set by the {service.key!r} service)") from exc
                 continue
-            if service_name in compose["services"]:
-                raise ConfigError(f"Duplicate Compose service {service_name!r}.")
-            compose["services"][service_name] = {"restart": "unless-stopped"}
-            _merge(compose["services"][service_name], model, f"services.{service_name}")
-            if "healthcheck" in model:
-                _merge(app, {"depends_on": {service_name: {"condition": "service_healthy"}}}, "services.app")
-        _merge(app["environment"], environment, f"services.app.environment from {instance_id}")
-        if spec.get("network"):
-            alias = spec["network"]
-            extra_networks.add(alias)
-            for service_name in own_names:
-                _merge(compose["services"][service_name], {"networks": ["default", alias]}, f"services.{service_name}")
-    if volumes:
-        compose["volumes"] = volumes
-    if extra_networks:
-        _merge(app, {"networks": ["default", *sorted(extra_networks)]}, "services.app")
-        compose["networks"] = {"default": {}}
-        for alias in sorted(extra_networks):
-            compose["networks"][alias] = {"external": True, "name": config.networks[alias]}
-    if not production and any(service.group == "testing" for _, service, _ in selections):
+            if target_name in services:
+                raise ConfigError(f"Duplicate Compose service {target_name!r}.")
+            services[target_name] = {"restart": "unless-stopped"}
+            _merge(services[target_name], model, f"services.{target_name}")
+            condition = "service_healthy" if "healthcheck" in model else "service_started"
+            _merge(app, {"depends_on": {target_name: {"condition": condition}}}, f"services.{app_name}")
+        try:
+            _merge(app["environment"], variables, f"services.{app_name}.environment")
+        except ConfigError as exc:
+            raise ConfigError(f"{exc} (set by the {service.key!r} service)") from exc
+
+    if config.external_network:
+        _merge(app, {"networks": ["default", config.external_network]}, f"services.{app_name}")
+        compose["networks"] = {"default": {}, config.external_network: {"external": True}}
+
+    if environment.is_development and any(selection.group == "testing" for selection in selections):
         networks = app.get("networks", ["default"])
         if isinstance(networks, list):
             networks = {network: {} for network in networks}
-        if not isinstance(networks, dict) or "default" not in networks:
-            raise ConfigError("Browser testing requires the app on the default Compose network.")
-        default = networks["default"]
-        if not isinstance(default, dict):
-            raise ConfigError("Browser testing requires a valid default network configuration.")
-        aliases = default.setdefault("aliases", [])
-        if not isinstance(aliases, list):
-            raise ConfigError("Browser testing requires a list of default network aliases.")
-        if "ship-app.test" not in aliases:
-            aliases.append("ship-app.test")
+        aliases = networks.setdefault("default", {}).setdefault("aliases", [])
+        if BROWSER_APP_HOST not in aliases:
+            aliases.append(BROWSER_APP_HOST)
         app["networks"] = networks
+
     if config.processes:
-        app_image = f"{name}-app:{'local' if production else 'development'}"
-        app["image"] = app_image
-        for process_name, command in config.processes.items():
-            if process_name in compose["services"]:
-                raise ConfigError(f"Process {process_name!r} conflicts with another Compose service.")
-            process = deepcopy(app)
-            for key in ("build", "ports", "healthcheck"):
-                process.pop(key, None)
-            process["command"] = command
-            compose["services"][process_name] = process
+        app["image"] = f"{name}-{app_name}:{'local' if production else 'development'}"
+        for process, command in config.processes.items():
+            model = deepcopy(app)
+            for key in ("build", "ports", "healthcheck", "extra_hosts"):
+                model.pop(key, None)
+            model["command"] = _escape_dollars(command_argv(command))
+            model["stop_grace_period"] = PROCESS_STOP_GRACE
+            if isinstance(model.get("networks"), dict):
+                model["networks"]["default"].pop("aliases", None)
+            services[process] = model
+
     if production:
-        for service_name, model in compose["services"].items():
+        for service_name, model in services.items():
             for mount in model.get("volumes", []):
-                if isinstance(mount, str) and mount.split(":", 1)[0].startswith((".", "/", "~")):
-                    raise ConfigError(f"Production service {service_name!r} cannot use a host bind mount.")
-                if isinstance(mount, dict) and mount.get("type") == "bind":
+                bind = (isinstance(mount, str) and mount.split(":", 1)[0].startswith((".", "/", "~"))) or (
+                    isinstance(mount, dict) and mount.get("type") == "bind"
+                )
+                if bind:
                     raise ConfigError(f"Production service {service_name!r} cannot use a host bind mount.")
             if "build" in model:
+                model["build"].setdefault("pull", True)
                 model.setdefault("image", f"{name}-{service_name}:local")
+    if volumes:
+        compose["volumes"] = volumes
     return compose
 
 
-def write_compose(config: ShipConfig, project_root: Path, *, production: bool = False, model: dict | None = None) -> Path:
+def host_user(config: ShipConfig) -> str | None:
+    """The host UID:GID the development app runs as, or None where it doesn't apply."""
+    if not config.host_user or mutagen_enabled() or not sys.platform.startswith("linux"):
+        return None
+    getuid = getattr(os, "getuid", None)
+    getgid = getattr(os, "getgid", None)
+    if getuid is None or getgid is None or getuid() == 0:
+        return None
+    return f"{getuid()}:{getgid()}"
+
+
+def compose_path(project_root: Path, *, production: bool = False) -> Path:
+    return project_root / "ship" / (PRODUCTION_FILE if production else DEVELOPMENT_FILE)
+
+
+def render(model: dict[str, Any]) -> str:
+    # JSON is valid YAML, so the file needs no YAML library and Compose reads it unchanged.
+    header = f"# Generated by python-ship {__version__} from ship.json. Edits are overwritten.\n"
+    return header + json.dumps(model, indent=2) + "\n"
+
+
+def write_compose(config: ShipConfig, project_root: Path, *, production: bool = False,
+                  model: dict[str, Any] | None = None) -> Path:
     model = build_compose(config, project_root, production=production) if model is None else model
-    destination = project_root / "ship" / ("compose.production.json" if production else "compose.generated.json")
+    destination = compose_path(project_root, production=production)
     destination.parent.mkdir(exist_ok=True)
-    destination.write_text(json.dumps(model, indent=2) + "\n", encoding="utf-8")
+    destination.write_text(render(model), encoding="utf-8")
     return destination

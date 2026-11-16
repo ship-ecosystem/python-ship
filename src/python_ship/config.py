@@ -1,184 +1,358 @@
-"""Project configuration stored in ship.json."""
+"""Project configuration stored in ship.json.
+
+Field names follow PHP Ship's ship.json so a team using both reads one format:
+``services``, ``additionalServices``, ``serviceNames``, ``externalNetwork``,
+``publishPorts``, ``deployCommands``, ``processes``, ``siloImage``,
+``hostUser``, ``name`` and ``extensions`` mean the same thing in both. The
+Python-specific fields are ``framework``, ``app``, ``python``, ``server``,
+``nodeAssets`` and ``djangoCollectstatic``.
+"""
+
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import re
+import shlex
 from typing import Any
+
+from .security import DEFAULT_PYTHON, problem_with
 
 
 class ConfigError(ValueError):
     """A project configuration is missing or invalid."""
 
 
+SERVICE_NAME = re.compile(r"[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*")
+INSTANCE_NAME = re.compile(r"[a-z][a-z0-9_]*")
+NETWORK_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
+SILO_IMAGES = ("standard", "distroless")
+# Groups where a second, named instance is a coherent idea. A second app runtime,
+# frontend toolchain or browser driver is not.
+GROUPS_SUPPORTING_ADDITIONAL_INSTANCES = ("database", "cache", "storage", "search", "mail")
+# Ship's own commands; a process or a framework console command can't take these names.
+RESERVED_COMMANDS = frozenset({
+    "init", "up", "down", "exec", "shell", "logs", "db", "config:test", "build", "release",
+    "npm", "uv", "doctor",
+})
+
+FIELDS = (
+    "framework", "app", "python", "server", "services", "additionalServices", "serviceNames",
+    "externalNetwork", "extensions", "name", "siloImage", "publishPorts", "hostUser",
+    "processes", "deployCommands", "nodeAssets", "djangoCollectstatic",
+)
+
+Command = str | list[str]
+
+
+def command_argv(command: Command) -> list[str]:
+    """A process or deploy command as an argument list; a string runs through ``sh -c``."""
+    return ["sh", "-c", command] if isinstance(command, str) else list(command)
+
+
+def command_text(command: Command) -> str:
+    return command if isinstance(command, str) else shlex.join(command)
+
+
+@dataclass(frozen=True)
+class AdditionalService:
+    group: str
+    service: str
+    name: str
+
+    def as_json(self) -> dict[str, str]:
+        return {"group": self.group, "service": self.service, "name": self.name}
+
+
 @dataclass(frozen=True)
 class ShipConfig:
-    framework: str
-    app: str
-    python: str = "3.13"
+    framework: str = "generic"
+    app: str = "main:app"
+    python: str = DEFAULT_PYTHON
+    server: str = "uvicorn"
     services: dict[str, str] = field(default_factory=dict)
+    additional_services: list[AdditionalService] = field(default_factory=list)
+    service_names: dict[str, str] = field(default_factory=dict)
+    external_network: str | None = None
     extensions: list[str] = field(default_factory=list)
     name: str | None = None
-    instances: dict[str, dict[str, str]] = field(default_factory=dict)
-    networks: dict[str, str] = field(default_factory=dict)
-    silo_image: str = "distroless"
-    server: str = "uvicorn"
+    silo_image: str = "standard"
     publish_ports: bool = False
-    processes: dict[str, list[str]] = field(default_factory=dict)
-    django_collectstatic: bool = False
+    host_user: bool = True
+    processes: dict[str, Command] = field(default_factory=dict)
+    deploy_commands: list[Command] = field(default_factory=list)
     node_assets: bool = False
-    deploy_commands: list[list[str]] = field(default_factory=list)
+    django_collectstatic: bool = False
+
+    @property
+    def app_service(self) -> str:
+        """The app's Compose service name, after any ``serviceNames`` rename."""
+        return self.service_names.get("app", "app")
 
     @classmethod
-    def read(cls, project_root: Path) -> "ShipConfig":
+    def read(cls, project_root: Path) -> ShipConfig:
         config, problems = cls.inspect(project_root)
         if problems:
-            raise ConfigError("; ".join(problems))
+            raise ConfigError(" ".join(problems))
         assert config is not None
         return config
 
     @classmethod
-    def inspect(cls, project_root: Path) -> tuple["ShipConfig | None", list[str]]:
-        """Read every independent schema error for config:test."""
-        path = project_root / "ship.json"
-        def unique_pairs(pairs):
-            result = {}
-            for key, value in pairs:
-                if key in result:
-                    raise ConfigError(f"Duplicate ship.json key {key!r}.")
-                result[key] = value
-            return result
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_pairs)
-        except FileNotFoundError:
-            return None, ["No ship.json found; run `ship init` first."]
-        except json.JSONDecodeError as exc:
-            return None, [f"Invalid ship.json: {exc}"]
-        except ConfigError as exc:
-            return None, [str(exc)]
-        if not isinstance(data, dict):
-            return None, ["ship.json must contain a JSON object."]
-        problems = []
-        allowed = {"framework", "app", "python", "services", "extensions", "name", "instances", "networks", "silo_image", "server", "publish_ports", "processes", "django_collectstatic", "node_assets", "deploy_commands"}
-        unknown = set(data) - allowed
+    def inspect(cls, project_root: Path) -> tuple[ShipConfig | None, list[str]]:
+        """Read ship.json, collecting every independent problem instead of stopping at the first."""
+        data, problems = _load(project_root / "ship.json")
+        if data is None:
+            return None, problems
+        config, problems = cls.from_data(data)
+        return config, problems
+
+    @classmethod
+    def lenient(cls, project_root: Path) -> ShipConfig | None:
+        """The readable fields of an existing ship.json, so one bad field doesn't discard the rest.
+
+        ``ship init`` uses this to carry over everything it doesn't prompt for.
+        """
+        data, _ = _load(project_root / "ship.json")
+        if data is None:
+            return None
+        values: dict[str, Any] = {}
+        for key in FIELDS:
+            if key not in data:
+                continue
+            # djangoCollectstatic is only valid together with its framework.
+            probe = {"app": "main:app", "framework": "django"} if key == "djangoCollectstatic" else {"app": "main:app"}
+            config, problems = cls.from_data({**probe, key: data[key]})
+            if not problems and config is not None:
+                attribute = _ATTRIBUTES[key]
+                values[attribute] = getattr(config, attribute)
+        return cls(**values)
+
+    @classmethod
+    def from_data(cls, data: dict[str, Any]) -> tuple[ShipConfig | None, list[str]]:
+        problems: list[str] = []
+        unknown = sorted(set(data) - set(FIELDS))
         if unknown:
-            problems.append(f"Unknown ship.json fields: {', '.join(sorted(unknown))}")
+            problems.append(f"ship.json has unknown fields: {', '.join(unknown)}.")
+
         framework = data.get("framework", "generic")
-        if not isinstance(framework, str) or not framework:
-            problems.append("ship.json framework must be a nonempty adapter name.")
-        if not isinstance(data.get("app"), str) or not data["app"]:
-            problems.append("ship.json requires a nonempty app import target.")
-        python = data.get("python", "3.13")
-        if not isinstance(python, str) or not re.fullmatch(r"3\.\d{1,2}", python):
-            problems.append("ship.json python must be a minor version such as 3.13.")
+        if not isinstance(framework, str) or not SERVICE_NAME.fullmatch(framework):
+            problems.append("ship.json \"framework\" must be an adapter key such as \"django\".")
+        app = data.get("app")
+        if not isinstance(app, str) or not app:
+            problems.append("ship.json requires \"app\", an ASGI target such as \"main:app\".")
+        python = data.get("python", DEFAULT_PYTHON)
+        if not isinstance(python, str):
+            problems.append("ship.json \"python\" must be a string such as \"3.13\".")
+        else:
+            python_problem = problem_with(python)
+            if python_problem:
+                problems.append(f"ship.json \"python\": {python_problem}")
+        server = data.get("server", "uvicorn")
+        if not isinstance(server, str) or not SERVICE_NAME.fullmatch(server):
+            problems.append("ship.json \"server\" must be an ASGI server key such as \"uvicorn\".")
+
         services = data.get("services", {})
         if not isinstance(services, dict) or any(
-            not isinstance(k, str) or not isinstance(v, str) for k, v in services.items()
+            not isinstance(group, str) or not isinstance(key, str) or not key for group, key in services.items()
         ):
-            problems.append("ship.json services must map group names to service names.")
-        instances = data.get("instances", {})
-        if not isinstance(instances, dict):
-            problems.append("ship.json instances must map instance names to service selections.")
+            problems.append("ship.json \"services\" must map each group to one service key.")
+            services = {}
+
+        additional: list[AdditionalService] = []
+        raw_additional = data.get("additionalServices", [])
+        if not isinstance(raw_additional, list):
+            problems.append("ship.json \"additionalServices\" must be a list of {group, service, name} objects.")
         else:
-            for instance_name, selection in instances.items():
-                if not isinstance(instance_name, str) or not re.fullmatch(r"[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*", instance_name):
-                    problems.append(f"ship.json instance name {instance_name!r} is invalid.")
-                if not isinstance(selection, dict):
-                    problems.append(f"ship.json instance {instance_name!r} must be an object.")
+            seen: set[str] = set()
+            for index, entry in enumerate(raw_additional):
+                where = f"ship.json \"additionalServices\"[{index}]"
+                if not isinstance(entry, dict):
+                    problems.append(f"{where} must be an object with group, service and name.")
                     continue
-                unknown_selection = set(selection) - {"group", "service", "name", "prefix", "network"}
-                if unknown_selection:
-                    problems.append(f"ship.json instance {instance_name!r} has unknown fields: {', '.join(sorted(map(str, unknown_selection)))}.")
-                for required in ("group", "service"):
-                    if not isinstance(selection.get(required), str) or not selection[required]:
-                        problems.append(f"ship.json instance {instance_name!r} requires a nonempty {required}.")
-                selected_name = selection.get("name", instance_name)
-                if not isinstance(selected_name, str) or not re.fullmatch(r"[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*", selected_name):
-                    problems.append(f"ship.json instance {instance_name!r} has an invalid Compose service name.")
-                prefix = selection.get("prefix", instance_name.upper().replace("-", "_"))
-                if not isinstance(prefix, str) or not re.fullmatch(r"[A-Z][A-Z0-9_]*", prefix):
-                    problems.append(f"ship.json instance {instance_name!r} has an invalid environment prefix.")
-                if "network" in selection and (not isinstance(selection["network"], str) or not selection["network"]):
-                    problems.append(f"ship.json instance {instance_name!r} has an invalid network alias.")
-        networks = data.get("networks", {})
-        if not isinstance(networks, dict) or any(
-            not isinstance(alias, str) or not re.fullmatch(r"[a-z][a-z0-9_-]*", alias) or alias == "default"
-            or not isinstance(external, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", external)
-            for alias, external in networks.items()
+                extra = sorted(set(entry) - {"group", "service", "name"})
+                if extra:
+                    problems.append(f"{where} has unknown fields: {', '.join(map(str, extra))}.")
+                group, service, name = entry.get("group"), entry.get("service"), entry.get("name")
+                if not isinstance(group, str) or not group or not isinstance(service, str) or not service:
+                    problems.append(f"{where} requires a group and a service.")
+                    continue
+                if group not in GROUPS_SUPPORTING_ADDITIONAL_INSTANCES:
+                    problems.append(
+                        f"{where}: the {group!r} group doesn't support additional instances; "
+                        f"only {', '.join(GROUPS_SUPPORTING_ADDITIONAL_INSTANCES)} do."
+                    )
+                if not isinstance(name, str) or not INSTANCE_NAME.fullmatch(name):
+                    problems.append(
+                        f"{where} name {name!r} must use lowercase letters, digits and underscores, "
+                        "starting with a letter (e.g. \"analytics\")."
+                    )
+                    continue
+                if name in seen:
+                    problems.append(f"ship.json \"additionalServices\" uses the name {name!r} twice.")
+                seen.add(name)
+                additional.append(AdditionalService(group, service, name))
+
+        service_names = data.get("serviceNames", {})
+        if not isinstance(service_names, dict) or any(
+            not isinstance(old, str) or not isinstance(new, str) or not SERVICE_NAME.fullmatch(new)
+            for old, new in service_names.items()
         ):
-            problems.append("ship.json networks must map non-default aliases to external Docker network names.")
+            problems.append(
+                "ship.json \"serviceNames\" must map default Compose service names to new lowercase names."
+            )
+            service_names = {}
+        elif len(set(service_names.values())) != len(service_names):
+            problems.append("ship.json \"serviceNames\" renames two services to the same name.")
+
+        external_network = data.get("externalNetwork")
+        if external_network is not None and (
+            not isinstance(external_network, str) or not NETWORK_NAME.fullmatch(external_network)
+        ):
+            problems.append("ship.json \"externalNetwork\" must be the name of an existing Docker network.")
+
         extensions = data.get("extensions", [])
-        if not isinstance(extensions, list) or any(
-            not isinstance(item, str) for item in extensions
-        ):
-            problems.append("ship.json extensions must be a list of entry point names.")
+        if not isinstance(extensions, list) or any(not isinstance(item, str) or not item for item in extensions):
+            problems.append("ship.json \"extensions\" must be a list of entry point names.")
+            extensions = []
         elif len(extensions) != len(set(extensions)):
-            problems.append("ship.json extensions contains duplicate entry point names.")
+            problems.append("ship.json \"extensions\" lists the same entry point twice.")
+
         name = data.get("name")
-        if name is not None and (not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*", name)):
-            problems.append("ship.json name must start with a lowercase letter and use single - or _ separators between lowercase letters or digits.")
-        silo_image = data.get("silo_image", "distroless")
-        if silo_image not in ("distroless", "standard"):
-            problems.append("ship.json silo_image must be 'distroless' or 'standard'.")
-        server = data.get("server", "uvicorn")
-        if not isinstance(server, str) or not re.fullmatch(r"[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*", server):
-            problems.append("ship.json server must be a nonempty ASGI server key.")
-        publish_ports = data.get("publish_ports", False)
-        if not isinstance(publish_ports, bool):
-            problems.append("ship.json publish_ports must be a boolean.")
+        if name is not None and (not isinstance(name, str) or not SERVICE_NAME.fullmatch(name)):
+            problems.append(
+                "ship.json \"name\" must start with a lowercase letter and use single - or _ "
+                "separators between lowercase letters and digits."
+            )
+
+        silo_image = data.get("siloImage", "standard")
+        if silo_image not in SILO_IMAGES:
+            problems.append("ship.json \"siloImage\" must be \"standard\" or \"distroless\".")
+
+        booleans = {}
+        for key in ("publishPorts", "hostUser", "nodeAssets", "djangoCollectstatic"):
+            value = data.get(key, key == "hostUser")
+            if not isinstance(value, bool):
+                problems.append(f"ship.json \"{key}\" must be true or false.")
+            booleans[key] = value
+        if booleans["djangoCollectstatic"] is True and framework != "django":
+            problems.append("ship.json \"djangoCollectstatic\" requires \"framework\": \"django\".")
+
         processes = data.get("processes", {})
         if not isinstance(processes, dict):
-            problems.append("ship.json processes must map service names to command argument lists.")
+            problems.append("ship.json \"processes\" must map process names to commands.")
+            processes = {}
         else:
-            for process_name, command in processes.items():
-                if not isinstance(process_name, str) or not re.fullmatch(r"[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*", process_name) or process_name == "app":
-                    problems.append(f"ship.json process name {process_name!r} is invalid or reserved.")
-                if not isinstance(command, list) or not command or any(not isinstance(part, str) or not part for part in command):
-                    problems.append(f"ship.json process {process_name!r} must have a nonempty argument list.")
-        django_collectstatic = data.get("django_collectstatic", False)
-        if not isinstance(django_collectstatic, bool):
-            problems.append("ship.json django_collectstatic must be a boolean.")
-        elif django_collectstatic and framework != "django":
-            problems.append("ship.json django_collectstatic requires the Django adapter.")
-        node_assets = data.get("node_assets", False)
-        if not isinstance(node_assets, bool):
-            problems.append("ship.json node_assets must be a boolean.")
-        deploy_commands = data.get("deploy_commands", [])
-        if not isinstance(deploy_commands, list) or any(
-            not isinstance(command, list) or not command or any(not isinstance(part, str) or not part for part in command)
-            for command in deploy_commands
-        ):
-            problems.append("ship.json deploy_commands must be a list of nonempty command argument lists.")
+            for process, command in processes.items():
+                if not isinstance(process, str) or not SERVICE_NAME.fullmatch(process):
+                    problems.append(f"ship.json process name {process!r} must be a lowercase Compose service name.")
+                elif process == "app" or process in RESERVED_COMMANDS:
+                    problems.append(f"ship.json process name {process!r} is reserved.")
+                if not _valid_command(command):
+                    problems.append(
+                        f"ship.json process {process!r} must be a shell command string or a nonempty argument list."
+                    )
+
+        deploy_commands = data.get("deployCommands", [])
+        if not isinstance(deploy_commands, list) or any(not _valid_command(item) for item in deploy_commands):
+            problems.append(
+                "ship.json \"deployCommands\" must be a list of shell command strings or argument lists."
+            )
+
         if problems:
             return None, problems
-        return cls(framework, data["app"], python, services, extensions, name, instances, networks, silo_image, server, publish_ports, processes, django_collectstatic, node_assets, deploy_commands), []
+        return cls(
+            framework=framework,
+            app=str(app),
+            python=python,
+            server=server,
+            services=dict(services),
+            additional_services=additional,
+            service_names=dict(service_names),
+            external_network=external_network,
+            extensions=list(extensions),
+            name=name,
+            silo_image=silo_image,
+            publish_ports=booleans["publishPorts"],
+            host_user=booleans["hostUser"],
+            processes=dict(processes),
+            deploy_commands=list(deploy_commands),
+            node_assets=booleans["nodeAssets"],
+            django_collectstatic=booleans["djangoCollectstatic"],
+        ), []
 
-    def write(self, project_root: Path) -> None:
+    def to_json(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "framework": self.framework,
             "app": self.app,
             "python": self.python,
-            "services": self.services,
-            "extensions": self.extensions,
         }
-        if self.name is not None:
-            payload["name"] = self.name
-        if self.instances:
-            payload["instances"] = self.instances
-        if self.networks:
-            payload["networks"] = self.networks
-        if self.silo_image != "distroless":
-            payload["silo_image"] = self.silo_image
         if self.server != "uvicorn":
             payload["server"] = self.server
+        payload["services"] = dict(self.services)
+        if self.additional_services:
+            payload["additionalServices"] = [entry.as_json() for entry in self.additional_services]
+        if self.service_names:
+            payload["serviceNames"] = dict(self.service_names)
+        if self.external_network is not None:
+            payload["externalNetwork"] = self.external_network
+        payload["extensions"] = list(self.extensions)
+        if self.name is not None:
+            payload["name"] = self.name
+        if self.silo_image != "standard":
+            payload["siloImage"] = self.silo_image
         if self.publish_ports:
-            payload["publish_ports"] = True
+            payload["publishPorts"] = True
+        if not self.host_user:
+            payload["hostUser"] = False
         if self.processes:
-            payload["processes"] = self.processes
-        if self.django_collectstatic:
-            payload["django_collectstatic"] = True
-        if self.node_assets:
-            payload["node_assets"] = True
+            payload["processes"] = dict(self.processes)
         if self.deploy_commands:
-            payload["deploy_commands"] = self.deploy_commands
-        (project_root / "ship.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+            payload["deployCommands"] = list(self.deploy_commands)
+        if self.node_assets:
+            payload["nodeAssets"] = True
+        if self.django_collectstatic:
+            payload["djangoCollectstatic"] = True
+        return payload
+
+    def write(self, project_root: Path) -> None:
+        (project_root / "ship.json").write_text(json.dumps(self.to_json(), indent=4) + "\n", encoding="utf-8")
+
+
+_ATTRIBUTES = {
+    "framework": "framework", "app": "app", "python": "python", "server": "server",
+    "services": "services", "additionalServices": "additional_services",
+    "serviceNames": "service_names", "externalNetwork": "external_network",
+    "extensions": "extensions", "name": "name", "siloImage": "silo_image",
+    "publishPorts": "publish_ports", "hostUser": "host_user", "processes": "processes",
+    "deployCommands": "deploy_commands", "nodeAssets": "node_assets",
+    "djangoCollectstatic": "django_collectstatic",
+}
+
+
+def _valid_command(command: object) -> bool:
+    if isinstance(command, str):
+        return bool(command.strip())
+    return isinstance(command, list) and bool(command) and all(isinstance(part, str) and part for part in command)
+
+
+def _load(path: Path) -> tuple[dict[str, Any] | None, list[str]]:
+    def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ConfigError(f"ship.json has a duplicate key {key!r}.")
+            result[key] = value
+        return result
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"), object_pairs_hook=unique)
+    except FileNotFoundError:
+        return None, ["No ship.json found; run `ship init` first."]
+    except json.JSONDecodeError as exc:
+        return None, [f"ship.json is not valid JSON: {exc}"]
+    except ConfigError as exc:
+        return None, [str(exc)]
+    if not isinstance(data, dict):
+        return None, ["ship.json must contain a JSON object."]
+    return data, []

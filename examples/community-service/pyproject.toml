@@ -7,7 +7,7 @@ name = "python-ship-example-http-service"
 version = "0.1.0"
 description = "Installable HTTP service extension example for Python Ship"
 requires-python = ">=3.11"
-dependencies = ["python-ship>=0.1.0.dev5,<0.2"]
+dependencies = ["python-ship>=0.1,<0.2"]
 
 [project.entry-points."python_ship.services"]
 example-http = "ship_example_http_service:ExampleHttpService"

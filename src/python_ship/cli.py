@@ -1,72 +1,64 @@
-"""Command-line entry point."""
+"""The `ship` command line, built on Typer.
 
-from importlib.resources import files
-from dataclasses import replace
-from pathlib import Path
-import json
+The command set mirrors PHP Ship: init, up, down, exec, shell, logs, db,
+config:test, build and release, plus proxies (npm, uv, and each framework
+adapter's console commands such as Django's `manage`).
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from contextvars import ContextVar
 import os
+from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
-from contextvars import ContextVar
-from types import SimpleNamespace
-from typing import Annotated
+from typing import Annotated, Any, NoReturn
 
 import typer
 
 from . import __version__
-from .compose import build_compose, selected_services, write_compose
+from .compose import (
+    adapter_problems,
+    build_compose,
+    resolve_selections,
+    selection_problems,
+    write_compose,
+)
 from .config import ConfigError, ShipConfig
-from .plugins import load_extensions
+from .contracts import ShipEnvironment
+from .init import InitOptions, ensure_dockerignore, ensure_gitignore, interactive_terminal, run_init
+from .mutagen import enabled as mutagen_enabled
+from .mutagen import start as start_mutagen
+from .mutagen import stop as stop_mutagen
+from .plugins import Registry, console_commands, load_extensions
 from .production import credential_problems, read_env
-from .release import assemble_release, plan_images
-from .mutagen import enabled as mutagen_enabled, start as start_mutagen, stop as stop_mutagen
-from .runtime import _records, _status, wait_for_stack
-from .uv import UV_VERSION, require_uv
+from .release import TAG_PATTERN, assemble_release, plan_images
+from .runtime import records, status, wait_for_stack
+from .stubs import asset_problems, production_stub_problem, published_version, stub_problems, stub_version_warning
+from .uv import UV_VERSION
 
-
-DOCKERIGNORE = (
-    ".env\n.env.*\n!.env.example\n"
-    "**/.env\n**/.env.*\n**/.venv\n**/__pycache__\n"
-    "**/*.pem\n**/*.key\n**/id_rsa\n**/id_ed25519\nsecrets/\n"
-    "node_modules/\n**/node_modules/\nstaticfiles/\n"
-    ".npmrc\n**/.npmrc\nauth.json\n**/auth.json\n"
-    ".git\ndist/\nship/compose.generated.json\nship/compose.production.json\n"
+OVERRIDE_FILES = (
+    "docker-compose.override.yml", "docker-compose.override.yaml", "compose.override.yml", "compose.override.yaml",
 )
-RELEASE_IGNORE_GUARD = (
-    "# python-ship release guard\n"
-    ".env\n.env.*\n**/.env\n**/.env.*\n"
-    "dist/ship/\n.npmrc\n**/.npmrc\nauth.json\n**/auth.json\n"
-)
-
-ASSET_STAGE = """FROM node:24.18.0-alpine3.24 AS assets
-WORKDIR /assets
-COPY package.json package-lock.json ./
-RUN npm ci
-COPY . .
-RUN npm run build && test -d dist && mkdir /ship-assets && cp -a dist/. /ship-assets/
-"""
-ASSET_COPY = "COPY --from=assets /ship-assets/ /app/dist/"
-
-
-app = typer.Typer(help="Docker environments for Python web apps")
 PROXY_CONTEXT = {"allow_extra_args": True, "ignore_unknown_options": True, "help_option_names": []}
-_raw_argv: ContextVar[list[str]] = ContextVar("ship_raw_argv", default=[])
+UV_STATEFUL = {"sync", "run", "pip", "python", "tool", "venv"}
+
+_raw_argv: ContextVar[list[str] | None] = ContextVar("ship_raw_argv", default=None)
 _project_root: ContextVar[Path | None] = ContextVar("ship_project_root", default=None)
 
 
-@app.callback()
-def root_command(
-    project_directory: Annotated[Path | None, typer.Option("--project-directory", help="Project containing ship.json")] = None,
-) -> None:
-    """Choose a Ship project from any working directory."""
-    if project_directory is not None:
-        _project_root.set(project_directory.resolve())
+# Helpers ----------------------------------------------------------------------------------------
+
+def root() -> Path:
+    return _project_root.get() or Path.cwd()
 
 
-def _proxy_tail(command: str, count: int) -> list[str]:
-    argv = _raw_argv.get()
+def proxy_tail(command: str, count: int) -> list[str]:
+    """The raw arguments after a proxy command, untouched by option parsing."""
+    argv = _raw_argv.get() or []
     index = 0
     while index < len(argv):
         if argv[index] == "--project-directory":
@@ -76,557 +68,514 @@ def _proxy_tail(command: str, count: int) -> list[str]:
         else:
             break
     if index >= len(argv) or argv[index] != command:
-        raise ConfigError(f"Could not locate raw {command} arguments.")
+        raise ConfigError(f"Could not locate the raw arguments of `ship {command}`.")
     return argv[index + count:]
 
 
-def _execute(command: str, **values: object) -> int:
+def fail(message: str) -> NoReturn:
+    raise ConfigError(message)
+
+
+def warn(message: str) -> None:
+    typer.echo(f"ship: warning: {message}", err=True)
+
+
+def require_docker() -> None:
+    if shutil.which("docker") is None:
+        fail("Docker is required for this command; install Docker Desktop or Docker Engine with Compose v2.")
+
+
+def override_file(project: Path) -> Path | None:
+    return next((project / name for name in OVERRIDE_FILES if (project / name).is_file()), None)
+
+
+def compose_prefix(project: Path, config: ShipConfig) -> list[str]:
+    """The `docker compose` prefix every development command shares, with the override file applied."""
+    path = write_compose(config, project)
+    require_docker()
+    prefix = ["docker", "compose", "--project-directory", str(project), "-f", str(path)]
+    override = override_file(project)
+    if override is not None:
+        prefix += ["-f", str(override)]
+    return prefix
+
+
+def tty_flags() -> list[str]:
+    # Without a terminal (CI, piped input) `docker compose exec` must not allocate one.
+    return [] if sys.stdin.isatty() else ["-T"]
+
+
+def run(command: list[str], project: Path) -> int:
+    return subprocess.run(command, cwd=project, check=False).returncode
+
+
+def execute(action: Callable[[], int]) -> int:
     try:
-        return _run(_project_root.get() or Path.cwd(), SimpleNamespace(command=command, **values))
+        return action()
     except (ConfigError, OSError) as exc:
         typer.echo(f"ship: {exc}", err=True)
         return 1
 
 
-@app.command("init")
-def init_command(
-    app_target: Annotated[str | None, typer.Option("--app", help="ASGI import target, such as main:app")] = None,
-    framework: Annotated[str | None, typer.Option(help="Framework adapter")] = None,
-    server: Annotated[str | None, typer.Option(help="ASGI server: uvicorn, hypercorn, or a selected extension")] = None,
-    python_version: Annotated[str | None, typer.Option("--python", help="Container Python minor version")] = None,
-    database: Annotated[str | None, typer.Option(help="Database service")] = None,
-    cache: Annotated[str | None, typer.Option(help="Cache service")] = None,
-    mail: Annotated[str | None, typer.Option(help="Mail service")] = None,
-    search: Annotated[str | None, typer.Option(help="Search service")] = None,
-    storage: Annotated[str | None, typer.Option(help="Storage service")] = None,
-    silo_image: Annotated[str | None, typer.Option("--silo-image", help="Silo image variant: distroless or standard")] = None,
-    testing: Annotated[str | None, typer.Option(help="Browser testing service")] = None,
-    frontend: Annotated[str | None, typer.Option(help="Frontend service")] = None,
-    force: Annotated[bool, typer.Option(help="Refresh the published Dockerfile")] = False,
-    node_assets: Annotated[bool, typer.Option("--node-assets", help="Build npm assets into the production image")] = False,
-) -> int:
-    """Create ship.json and a project Dockerfile."""
-    return _execute("init", app=app_target, framework=framework, server=server, python=python_version,
-                    database=database, cache=cache, mail=mail, search=search,
-                    storage=storage, silo_image=silo_image, testing=testing, frontend=frontend, force=force,
-                    node_assets=node_assets)
+def read_config(project: Path) -> ShipConfig:
+    return ShipConfig.read(project)
 
 
-@app.command("config:test")
-def config_test_command() -> int:
-    """Validate configuration without starting Docker."""
-    return _execute("config:test")
+# Checks shared by config:test, doctor, up, build and release -------------------------------------
 
+def config_problems(project: Path, *, production: bool = True) -> list[str]:
+    """Every independent problem with ship.json, ship/ and both Compose models, in one pass.
 
-@app.command("build")
-def build_command() -> int:
-    """Build the production images and generate their Compose model."""
-    return _execute("build")
-
-
-@app.command("release")
-def release_command(tag: Annotated[str | None, typer.Option("--tag", help="Docker image and artifact tag")] = None) -> int:
-    """Build a portable Docker-only production release."""
-    return _execute("release", tag=tag)
-
-
-@app.command("doctor")
-def doctor_command() -> int:
-    """Report project versions and live container health."""
-    return _execute("doctor")
-
-
-@app.command("up")
-def up_command() -> int:
-    """Generate Compose and start the development stack."""
-    return _execute("up")
-
-
-@app.command("down")
-def down_command(volumes: Annotated[bool, typer.Option(help="Delete named data volumes too")] = False) -> int:
-    """Stop the development stack."""
-    return _execute("down", volumes=volumes)
-
-
-@app.command("logs")
-def logs_command(
-    service: Annotated[str | None, typer.Argument(help="Compose service name")] = None,
-    follow: Annotated[bool, typer.Option("--follow", "-f", help="Stream logs")] = False,
-) -> int:
-    """Show container logs."""
-    return _execute("logs", service=service, follow=follow)
-
-
-@app.command("shell")
-def shell_command(service: Annotated[str, typer.Argument(help="Compose service name")] = "app") -> int:
-    """Open an interactive shell in a running container."""
-    return _execute("shell", service=service)
-
-
-@app.command("db")
-def db_command(service: Annotated[str | None, typer.Option("--service", help="Database instance name")] = None) -> int:
-    """Open an interactive shell for a selected database."""
-    return _execute("db", service=service)
-
-
-@app.command("exec", context_settings=PROXY_CONTEXT)
-def exec_command(ctx: typer.Context, service: Annotated[str, typer.Argument(help="Compose service name")]) -> int:
-    """Run a command in a service container; remaining arguments pass through."""
-    return _execute("exec", service=service, args=_proxy_tail("exec", 2))
-
-
-@app.command("manage", context_settings=PROXY_CONTEXT)
-def manage_command(ctx: typer.Context) -> int:
-    """Run a Django manage.py command; all arguments pass through."""
-    return _execute("manage", args=_proxy_tail("manage", 1))
-
-
-@app.command("npm", context_settings=PROXY_CONTEXT)
-def npm_command(ctx: typer.Context) -> int:
-    """Run npm inside the optional Node container."""
-    return _execute("npm", args=_proxy_tail("npm", 1))
-
-
-@app.command("uv", context_settings=PROXY_CONTEXT)
-def uv_command(ctx: typer.Context) -> int:
-    """Run project dependency commands in an isolated uv and Python container."""
-    return _execute("uv", args=_proxy_tail("uv", 1))
-
-
-def _ensure_dockerignore(root: Path) -> None:
-    path = root / ".dockerignore"
-    existing = path.read_text(encoding="utf-8") if path.exists() else ""
-    missing = [line for line in DOCKERIGNORE.splitlines() if line not in existing.splitlines()]
-    if missing:
-        with path.open("a", encoding="utf-8") as stream:
-            if existing and not existing.endswith("\n"):
-                stream.write("\n")
-            stream.write("\n".join(missing) + "\n")
-    current = path.read_text(encoding="utf-8")
-    if not current.endswith(RELEASE_IGNORE_GUARD):
-        current = current.replace(RELEASE_IGNORE_GUARD, "")
-        path.write_text(current.rstrip("\n") + "\n" + RELEASE_IGNORE_GUARD, encoding="utf-8")
-
-
-def _ensure_gitignore(root: Path) -> None:
-    path = root / ".gitignore"
-    current = path.read_text(encoding="utf-8") if path.is_file() else ""
-    if "dist/ship/" not in current.splitlines():
-        with path.open("a", encoding="utf-8") as stream:
-            if current and not current.endswith("\n"):
-                stream.write("\n")
-            stream.write("dist/ship/\n")
-
-
-def _init(root: Path, args: SimpleNamespace) -> int:
-    config_path = root / "ship.json"
-    dockerfile = root / "ship" / "Dockerfile"
-    existing = ShipConfig.read(root) if config_path.exists() else None
-    if not args.app and existing is None:
-        raise ConfigError("ship init requires --app for a new project.")
-    if dockerfile.exists() and existing is None and not args.force:
-        raise ConfigError("ship/Dockerfile already exists; use --force to replace it.")
-    services = dict(existing.services) if existing else {}
-    for group in ("database", "cache", "mail", "search", "storage", "testing", "frontend"):
-        selected = getattr(args, group)
-        if selected == "none":
-            services.pop(group, None)
-        elif selected is not None:
-            services[group] = selected
-    config = ShipConfig(
-        args.framework or (existing.framework if existing else "generic"),
-        args.app or (existing.app if existing else ""),
-        args.python or (existing.python if existing else "3.13"),
-        services,
-        list(existing.extensions) if existing else [],
-        existing.name if existing else None,
-        dict(existing.instances) if existing else {},
-        dict(existing.networks) if existing else {},
-        args.silo_image or (existing.silo_image if existing else "distroless"),
-        args.server or (existing.server if existing else "uvicorn"),
-        existing.publish_ports if existing else False,
-        dict(existing.processes) if existing else {},
-        existing.django_collectstatic if existing else False,
-        args.node_assets or (existing.node_assets if existing else False),
-        list(existing.deploy_commands) if existing else [],
-    )
-    # Validate the complete model before writing any project files.
-    build_compose(config, root)
-    server_stub_problem = _server_stub_problem(root, config)
-    if server_stub_problem and not args.force:
-        raise ConfigError(server_stub_problem)
-    asset_stub_problem = next((item for item in _asset_problems(root, config) if "refreshed ship/Dockerfile" in item), None)
-    if asset_stub_problem and dockerfile.exists() and not args.force:
-        raise ConfigError(asset_stub_problem)
-    needs_garage = "garage" in config.services.values() or any(
-        selection.get("service") == "garage" for selection in config.instances.values()
-    )
-    require_uv()
-    dockerfile.parent.mkdir(exist_ok=True)
-    version_file = dockerfile.parent / ".ship-version"
-    published = args.force or not dockerfile.exists()
-    if published:
-        dockerfile.write_text(
-            files("python_ship").joinpath("templates/Dockerfile")
-            .read_text(encoding="utf-8")
-            .replace("@UV_VERSION@", UV_VERSION)
-            .replace("@ASSET_STAGE@", ASSET_STAGE if config.node_assets else "")
-            .replace("@ASSET_COPY@", ASSET_COPY if config.node_assets else ""),
-            encoding="utf-8",
-        )
-        version_file.write_text(__version__ + "\n", encoding="utf-8")
-    elif not version_file.is_file() or version_file.read_text(encoding="utf-8").strip() != __version__:
-        typer.echo("ship: warning: published Dockerfile version differs from this Ship installation; use `ship init --force` to refresh it.", err=True)
-    if needs_garage:
-        garage_dir = dockerfile.parent / "garage"
-        garage_dir.mkdir(exist_ok=True)
-        for filename in ("Dockerfile", "garage.toml"):
-            target = garage_dir / filename
-            if args.force or not target.exists():
-                target.write_text(
-                    files("python_ship").joinpath("templates", "garage", filename).read_text(encoding="utf-8"),
-                    encoding="utf-8",
-                )
-    config.write(root)
-    _ensure_dockerignore(root)
-    _ensure_gitignore(root)
-    print("Updated ship.json and kept the existing Dockerfile." if existing and not published else
-          "Created ship.json and ship/Dockerfile. Run `ship up` to start the stack.")
-    return 0
-
-
-def _compose_prefix(root: Path, config: ShipConfig) -> list[str]:
-    compose = write_compose(config, root)
-    if shutil.which("docker") is None:
-        raise ConfigError("Docker is required for this command.")
-    prefix = ["docker", "compose", "--project-directory", str(root), "-f", str(compose)]
-    override = root / "compose.override.yaml"
-    if override.exists():
-        prefix.extend(["-f", str(override)])
-    return prefix
-
-
-def _stub_warning(root: Path) -> str | None:
-    version_file = root / "ship" / ".ship-version"
-    if not version_file.is_file() or version_file.read_text(encoding="utf-8").strip() != __version__:
-        return "published Dockerfile version differs from this Ship installation; run `ship init --force` to refresh it."
-    return None
-
-
-def _server_stub_problem(root: Path, config: ShipConfig) -> str | None:
-    dockerfile = root / "ship" / "Dockerfile"
-    if config.server != "uvicorn" and dockerfile.is_file() and "SHIP_SERVER_REQUIREMENT" not in dockerfile.read_text(encoding="utf-8"):
-        return "ship/Dockerfile cannot install the selected ASGI server; run `ship init --force` to refresh it."
-    return None
-
-
-def _production_stub_problem(root: Path) -> str | None:
-    dockerfile = root / "ship" / "Dockerfile"
-    if not dockerfile.is_file() or "AS production" not in dockerfile.read_text(encoding="utf-8"):
-        return "ship/Dockerfile has no production stage; run `ship init --force` to refresh it."
-    return None
-
-
-def _asset_problems(root: Path, config: ShipConfig) -> list[str]:
-    if not config.node_assets:
-        return []
-    problems = []
-    dockerfile = root / "ship" / "Dockerfile"
-    if not dockerfile.is_file() or "AS assets" not in dockerfile.read_text(encoding="utf-8"):
-        problems.append("Node assets require a refreshed ship/Dockerfile; run `ship init --force`.")
-    package = root / "package.json"
-    if not package.is_file():
-        problems.append("Node assets require package.json with a build script.")
-    else:
-        try:
-            data = json.loads(package.read_text(encoding="utf-8"))
-            if not isinstance(data, dict) or not isinstance(data.get("scripts"), dict) or not isinstance(data["scripts"].get("build"), str):
-                problems.append("Node assets require a package.json build script.")
-        except (OSError, ValueError):
-            problems.append("Node assets require a valid package.json.")
-    if not (root / "package-lock.json").is_file():
-        problems.append("Node assets require package-lock.json for npm ci.")
-    return problems
-
-
-def _garage_stub_problems(root: Path, config: ShipConfig) -> list[str]:
-    selected = "garage" in config.services.values() or any(
-        instance.get("service") == "garage" for instance in config.instances.values()
-    )
-    if not selected:
-        return []
-    return [
-        f"ship/garage/{filename} is missing; run `ship init` to publish Garage's build files."
-        for filename in ("Dockerfile", "garage.toml")
-        if not (root / "ship" / "garage" / filename).is_file()
-    ]
-
-
-def _config_problems(root: Path) -> list[str]:
-    config, problems = ShipConfig.inspect(root)
-    if not (root / "ship" / "Dockerfile").is_file():
-        problems.append("ship/Dockerfile is missing; run `ship init`.")
+    ``production=False`` skips the production model, for development-only diagnostics.
+    """
+    config, problems = ShipConfig.inspect(project)
+    problems = list(problems)
+    problems.extend(stub_problems(project, config))
     if config is None:
         return problems
-    server_stub_problem = _server_stub_problem(root, config)
-    if server_stub_problem:
-        problems.append(server_stub_problem)
-    problems.extend(_garage_stub_problems(root, config))
     try:
-        adapters, services = load_extensions(config)
+        registry = load_extensions(config)
+    except ConfigError as exc:
+        return [*problems, str(exc)]
+    problems.extend(adapter_problems(config, project, registry))
+    if config.server not in registry.servers:
+        problems.append(f"Unknown ASGI server {config.server!r}; use one of {', '.join(sorted(registry.servers))}.")
+    problems.extend(selection_problems(config, registry))
+    try:
+        console_commands(registry.adapter(config))
     except ConfigError as exc:
         problems.append(str(exc))
-        return problems
-    adapter = adapters.get(config.framework)
-    if adapter is None:
-        problems.append(f"Unknown framework adapter {config.framework!r}.")
-    else:
-        try:
-            adapter_problems = adapter.validate(config, root)
-            if not isinstance(adapter_problems, list) or any(not isinstance(item, str) for item in adapter_problems):
-                raise ConfigError(f"Adapter {config.framework!r} returned invalid validation results.")
-            problems.extend(adapter_problems)
-        except Exception as exc:
-            problems.append(f"Adapter {config.framework!r} validation failed: {exc}")
-    for group, key in config.services.items():
-        service = services.get(key)
-        if service is None or service.group != group:
-            problems.append(f"Unknown service {key!r} in group {group!r}.")
-    try:
-        selected_services(config, services)
-    except ConfigError as exc:
-        if str(exc) not in problems:
-            problems.append(str(exc))
     if not problems:
-        for production in (False, True):
+        for model_production in ((False, True) if production else (False,)):
             try:
-                model = build_compose(config, root, production=production)
-                if production:
-                    problems.extend(credential_problems(model, root))
+                model = build_compose(config, project, production=model_production, registry=registry)
             except ConfigError as exc:
-                problems.append(f"{'Production' if production else 'Development'} Compose: {exc}")
-        if config.processes and any("Process " in problem and "conflicts" in problem for problem in problems):
-            # An unrelated process name collision must not hide credential errors.
-            try:
-                credential_model = build_compose(replace(config, processes={}), root, production=True)
-                problems.extend(credential_problems(credential_model, root))
-            except ConfigError:
-                pass
-    problems.extend(_asset_problems(root, config))
-    return problems
+                problems.append(f"{'Production' if model_production else 'Development'} Compose model: {exc}")
+                continue
+            if model_production:
+                problems.extend(credential_problems(model, project))
+    problems.extend(asset_problems(project, config))
+    return list(dict.fromkeys(problems))
 
 
-def _build_production(root: Path, config: ShipConfig, tag: str) -> tuple[dict, list[dict]]:
-    problem = _production_stub_problem(root)
+# Production -------------------------------------------------------------------------------------
+
+def build_production(project: Path, config: ShipConfig, tag: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    problem = production_stub_problem(project)
     if problem:
-        raise ConfigError(problem)
-    model = build_compose(config, root, production=True)
-    problems = credential_problems(model, root)
-    problems.extend(_asset_problems(root, config))
+        fail(problem)
+    problems = stub_problems(project, config)
+    model = build_compose(config, project, production=True)
+    problems += credential_problems(model, project) + asset_problems(project, config)
     if problems:
-        raise ConfigError(" ".join(problems))
-    if shutil.which("docker") is None:
-        raise ConfigError("Docker is required for production builds.")
-    _ensure_dockerignore(root)
-    _ensure_gitignore(root)
+        fail(" ".join(problems))
+    require_docker()
+    ensure_dockerignore(project)
+    ensure_gitignore(project)
     planned, images = plan_images(model, tag)
-    path = write_compose(config, root, production=True, model=planned)
-    prefix = ["docker", "compose", "--project-directory", str(root)]
-    env_file = root / ".env.production"
+    path = write_compose(config, project, production=True, model=planned)
+    env_file = project / ".env.production"
+    # The override file is deliberately not applied: a dev-only override has no business
+    # reaching a production image.
+    prefix = ["docker", "compose", "--project-directory", str(project)]
     if env_file.is_file():
         prefix += ["--env-file", str(env_file)]
     command = prefix + ["-f", str(path), "build", *(image["owner"] for image in images)]
     environment = {**os.environ, **read_env(env_file)}
-    result = subprocess.run(command, cwd=root, env=environment, check=False)
-    if result.returncode != 0:
-        raise ConfigError("Building one or more production images failed; see Docker output above.")
+    if subprocess.run(command, cwd=project, env=environment, check=False).returncode != 0:
+        fail("Building the production images failed; see the Docker output above.")
     return planned, images
 
 
-def _run(root: Path, args: SimpleNamespace) -> int:
-    if args.command == "init":
-        return _init(root, args)
-    if args.command == "uv":
-        config = ShipConfig.read(root)
-        if not args.args:
-            raise ConfigError("ship uv requires uv arguments, such as `ship uv add httpx` or `ship uv lock`.")
-        if args.args[0] in {"sync", "run", "pip", "python", "tool"}:
-            raise ConfigError("ship uv runs dependency metadata commands in a temporary container. Use `ship up` to install dependencies in the app image, or `ship exec app` to run app commands.")
-        if shutil.which("docker") is None:
-            raise ConfigError("Docker is required for `ship uv`.")
-        image = f"ghcr.io/astral-sh/uv:{UV_VERSION}-python{config.python}-trixie-slim"
-        command = [
-            "docker", "run", "--rm", "--interactive",
-            "--volume", f"{root.resolve()}:/app", "--workdir", "/app",
-            "--env", "HOME=/tmp", "--env", "UV_CACHE_DIR=/tmp/ship-uv-cache",
-            "--env", "UV_PROJECT_ENVIRONMENT=/tmp/ship-uv-venv",
-            "--env", "UV_NO_SYNC=1", "--env", f"UV_PYTHON=python{config.python}",
-        ]
-        if sys.platform.startswith("linux") and hasattr(os, "getuid"):
-            command += ["--user", f"{os.getuid()}:{os.getgid()}"]
-        if sys.stdin.isatty() and sys.stdout.isatty():
-            command.append("--tty")
-        command += [image, "uv", *args.args]
-        return subprocess.run(command, cwd=root, check=False).returncode
-    if args.command == "config:test":
-        problems = _config_problems(root)
-        for problem in problems:
-            typer.echo(f"ship: {problem}", err=True)
-        if problems:
-            return 1
-        warning = _stub_warning(root)
-        if warning:
-            typer.echo(f"ship: warning: {warning}", err=True)
-        print("ship.json and both Compose models are valid.")
-        return 0
-    if args.command == "build":
-        config = ShipConfig.read(root)
-        _build_production(root, config, "local")
-        return 0
-    if args.command == "release":
-        tag = args.tag
-        if tag is None:
-            if not sys.stdin.isatty():
-                raise ConfigError("ship release requires --tag in a non-interactive session.")
-            try:
-                tag = input("Release tag: ").strip()
-            except EOFError as exc:
-                raise ConfigError("ship release needs a tag; no input was received.") from exc
-        if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}", tag):
-            raise ConfigError("Invalid release tag; use letters, digits, _, . or -, starting with a letter, digit or _.")
-        config = ShipConfig.read(root)
-        if not (root / ".env.production").is_file():
-            raise ConfigError("ship release requires .env.production, even when no selected service needs credentials.")
-        model, _ = _build_production(root, config, tag)
-        destination = assemble_release(root, config, model, tag)
-        print(f"Release ready at {destination}")
-        return 0
-    if args.command == "doctor":
-        problems = _config_problems(root)
-        for problem in problems:
-            typer.echo(f"ship: {problem}", err=True)
-        if problems:
-            return 1
-        config = ShipConfig.read(root)
-        model = build_compose(config, root)
-        print(f"Ship {__version__}; project {model['name']}; Python {config.python}; ASGI server {config.server}")
-        published_version = root / "ship" / ".ship-version"
-        print("Published Dockerfile: " + (published_version.read_text(encoding="utf-8").strip() if published_version.is_file() else "unversioned"))
-        warning = _stub_warning(root)
-        if warning:
-            typer.echo(f"ship: warning: {warning}", err=True)
-        prefix = _compose_prefix(root, config)
-        result = subprocess.run(prefix + ["ps", "--all", "--format", "json"], cwd=root, capture_output=True, text=True, check=False)
-        if result.returncode != 0:
-            raise ConfigError(f"Could not inspect Docker Compose: {result.stderr.strip()}. Check Docker and run `ship up`.")
-        records = _records(result.stdout)
-        fatal, pending, _ = _status(records, set(model["services"]))
-        for name, service in model["services"].items():
-            record = records.get(name, {})
-            image = service.get("image", "local build")
-            state = record.get("State", "missing")
-            health = record.get("Health")
-            print(f"{name}: {image}; {state}" + (f"; health {health}" if health else ""))
-        if fatal or pending:
-            for problem in [*fatal, *pending]:
+# Commands ---------------------------------------------------------------------------------------
+
+def version_callback(value: bool) -> None:
+    if value:
+        typer.echo(f"ship (python-ship) {__version__}")
+        raise typer.Exit()
+
+
+def create_app(adapter_commands: dict[str, list[str]] | None = None) -> typer.Typer:
+    app = typer.Typer(
+        help="Docker development environments and portable releases for Python web apps.",
+        no_args_is_help=True,
+        add_completion=True,
+        rich_markup_mode=None,
+        pretty_exceptions_enable=False,
+    )
+
+    @app.callback()
+    def main_options(
+        project_directory: Annotated[Path | None, typer.Option(
+            "--project-directory", help="Run against the project in this directory instead of the current one.",
+        )] = None,
+        version: Annotated[bool, typer.Option(
+            "--version", "-V", callback=version_callback, is_eager=True, help="Show the python-ship version and exit.",
+        )] = False,
+    ) -> None:
+        if project_directory is not None:
+            _project_root.set(project_directory.resolve())
+
+    @app.command("init")
+    def init_command(
+        app_target: Annotated[str | None, typer.Option("--app", help="ASGI import target, such as main:app.")] = None,
+        framework: Annotated[str | None, typer.Option(help="Framework adapter: generic, django, fastapi, or an extension.")] = None,
+        server: Annotated[str | None, typer.Option(help="ASGI server: uvicorn, hypercorn, or an extension.")] = None,
+        python_version: Annotated[str | None, typer.Option("--python", help="Python branch for the image, such as 3.13.")] = None,
+        database: Annotated[str | None, typer.Option(help="Database service, or none.")] = None,
+        cache: Annotated[str | None, typer.Option(help="Cache service, or none.")] = None,
+        storage: Annotated[str | None, typer.Option(help="Object storage service, or none.")] = None,
+        search: Annotated[str | None, typer.Option(help="Search service, or none.")] = None,
+        mail: Annotated[str | None, typer.Option(help="Mail capture service, or none.")] = None,
+        testing: Annotated[str | None, typer.Option(help="Browser testing service, or none.")] = None,
+        frontend: Annotated[str | None, typer.Option(help="Frontend tooling service, or none.")] = None,
+        silo_image: Annotated[str | None, typer.Option("--silo-image", help="Silo image: standard or distroless.")] = None,
+        node_assets: Annotated[bool | None, typer.Option("--node-assets/--no-node-assets", help="Build npm assets into the production image.")] = None,
+        force: Annotated[bool, typer.Option("--force", help="Republish ship/Dockerfile, replacing local edits.")] = False,
+        no_interaction: Annotated[bool, typer.Option("--no-interaction", "-n", help="Don't prompt; use options, the existing ship.json and detection.")] = False,
+    ) -> int:
+        """Pick services, write ship.json and publish the ship/ directory."""
+        options = InitOptions(
+            app=app_target, framework=framework, server=server, python=python_version,
+            selections={"database": database, "cache": cache, "storage": storage, "search": search,
+                        "mail": mail, "testing": testing, "frontend": frontend},
+            silo_image=silo_image, node_assets=node_assets, force=force,
+            interactive=not no_interaction and interactive_terminal(),
+        )
+        return execute(lambda: run_init(root(), options))
+
+    @app.command("up")
+    def up_command() -> int:
+        """Generate ship/docker-compose.generated.yml and start the development stack."""
+        return execute(up)
+
+    @app.command("down")
+    def down_command(
+        volumes: Annotated[bool, typer.Option("--volumes", "-v", help="Also delete named volumes (database and storage data).")] = False,
+    ) -> int:
+        """Stop and remove the development stack."""
+        def action() -> int:
+            project = root()
+            config = read_config(project)
+            prefix = compose_prefix(project, config)
+            stop_mutagen(project, required=mutagen_enabled())
+            return run(prefix + ["down", *(["--volumes"] if volumes else [])], project)
+        return execute(action)
+
+    @app.command("exec", context_settings=PROXY_CONTEXT)
+    def exec_command(ctx: typer.Context, service: Annotated[str, typer.Argument(help="Compose service name.")]) -> int:
+        """Run a command in a running service; every following argument is passed through."""
+        def action() -> int:
+            arguments = proxy_tail("exec", 2)
+            if not arguments:
+                fail("ship exec requires a command after the service name, such as `ship exec app python -V`.")
+            project = root()
+            prefix = compose_prefix(project, read_config(project))
+            return run(prefix + ["exec", *tty_flags(), service, *arguments], project)
+        return execute(action)
+
+    @app.command("shell")
+    def shell_command(service: Annotated[str | None, typer.Argument(help="Compose service name; defaults to the app.")] = None) -> int:
+        """Open an interactive shell (sh) in a running service."""
+        def action() -> int:
+            project = root()
+            config = read_config(project)
+            prefix = compose_prefix(project, config)
+            return run(prefix + ["exec", *tty_flags(), service or config.app_service, "sh"], project)
+        return execute(action)
+
+    @app.command("logs")
+    def logs_command(
+        service: Annotated[str | None, typer.Argument(help="Compose service name; all services when omitted.")] = None,
+        follow: Annotated[bool, typer.Option("--follow", "-f", help="Stream new log output.")] = False,
+    ) -> int:
+        """Show container logs."""
+        def action() -> int:
+            project = root()
+            prefix = compose_prefix(project, read_config(project))
+            return run(prefix + ["logs", *(["--follow"] if follow else []), *([service] if service else [])], project)
+        return execute(action)
+
+    @app.command("db")
+    def db_command(instance: Annotated[str | None, typer.Argument(help="Name of an additionalServices database; the default database when omitted.")] = None) -> int:
+        """Open a database's interactive client, using credentials from its own container."""
+        return execute(lambda: database_shell(instance))
+
+    @app.command("config:test")
+    def config_test_command() -> int:
+        """Validate ship.json, ship/ and both Compose models without starting Docker."""
+        def action() -> int:
+            project = root()
+            problems = config_problems(project)
+            for problem in problems:
                 typer.echo(f"ship: {problem}", err=True)
-            typer.echo("ship: run `ship logs SERVICE` for failures, then `ship up` to rebuild or restart the stack.", err=True)
-            return 1
-        print("All selected services are running and the app port is published.")
-        return 0
-    config = ShipConfig.read(root)
-    if args.command == "up":
-        server_stub_problem = _server_stub_problem(root, config)
-        if server_stub_problem:
-            raise ConfigError(server_stub_problem)
-        stub_problems = _garage_stub_problems(root, config)
-        if stub_problems:
-            raise ConfigError(" ".join(stub_problems))
-        warning = _stub_warning(root)
-        if warning:
-            typer.echo(f"ship: warning: {warning}", err=True)
-    prefix = _compose_prefix(root, config)
-    if args.command == "up":
-        # Terminate any session from a prior container before Compose recreates it.
-        stop_mutagen(root, required=mutagen_enabled())
-        command = prefix + ["up", "--build", "-d"]
-    elif args.command == "down":
-        stop_mutagen(root, required=mutagen_enabled())
-        command = prefix + ["down"] + (["--volumes"] if args.volumes else [])
-    elif args.command == "logs":
-        command = prefix + ["logs"] + (["--follow"] if args.follow else []) + ([args.service] if args.service else [])
-    elif args.command == "shell":
-        command = prefix + ["exec", args.service, "sh"]
-    elif args.command == "db":
-        _, definitions = load_extensions(config)
-        databases = [(id, service, spec) for id, service, spec in selected_services(config, definitions) if spec["group"] == "database"]
-        chosen = next((item for item in databases if item[0] == args.service), None) if args.service else next((item for item in databases if item[0] == "database"), None)
-        if chosen is None and args.service is None and len(databases) == 1:
-            chosen = databases[0]
+            if problems:
+                typer.echo(f"ship: {len(problems)} problem{'s' if len(problems) != 1 else ''} found.", err=True)
+                return 1
+            warning = stub_version_warning(project)
+            if warning:
+                warn(warning)
+            typer.echo("ship.json, ship/ and both Compose models are valid.")
+            return 0
+        return execute(action)
+
+    @app.command("build")
+    def build_command() -> int:
+        """Build every project-owned production image, tagged locally."""
+        def action() -> int:
+            project = root()
+            _, images = build_production(project, read_config(project), "local")
+            for image in images:
+                typer.echo(f"Built {image['image']} ({', '.join(image['services'])})")
+            return 0
+        return execute(action)
+
+    @app.command("release")
+    def release_command(tag: Annotated[str | None, typer.Option("--tag", help="Release tag, such as 1.2.0.")] = None) -> int:
+        """Build the production images and assemble the portable release in dist/ship/<tag>/."""
+        def action() -> int:
+            chosen = tag
+            if chosen is None:
+                if not sys.stdin.isatty():
+                    fail("ship release requires --tag when it isn't run from a terminal.")
+                chosen = str(typer.prompt("Release tag")).strip()
+            if not re.fullmatch(TAG_PATTERN, chosen):
+                fail("Invalid release tag; use letters, digits, _, . or -, starting with a letter, digit or _.")
+            project = root()
+            config = read_config(project)
+            if not (project / ".env.production").is_file():
+                fail("ship release requires .env.production, even when no selected service needs credentials.")
+            model, _ = build_production(project, config, chosen)
+            destination = assemble_release(project, config, model, chosen)
+            typer.echo(f"Release ready at {destination}")
+            return 0
+        return execute(action)
+
+    @app.command("doctor")
+    def doctor_command() -> int:
+        """Report versions, stub freshness and the state and health of every container."""
+        return execute(doctor)
+
+    @app.command("npm", context_settings=PROXY_CONTEXT)
+    def npm_command(ctx: typer.Context) -> int:
+        """Run npm in the Node frontend service; arguments pass through."""
+        def action() -> int:
+            project = root()
+            config = read_config(project)
+            registry = load_extensions(config)
+            nodes = [item for item in resolve_selections(config, registry) if item.service.key == "node"]
+            if len(nodes) != 1:
+                fail("ship npm requires the Node frontend service; select it with `ship init --frontend node`.")
+            prefix = compose_prefix(project, config)
+            return run(prefix + ["exec", *tty_flags(), nodes[0].service_name, "npm", *proxy_tail("npm", 1)], project)
+        return execute(action)
+
+    @app.command("uv", context_settings=PROXY_CONTEXT)
+    def uv_command(ctx: typer.Context) -> int:
+        """Run uv dependency commands (add, remove, lock, tree, ...) in a temporary container."""
+        return execute(lambda: uv(proxy_tail("uv", 1)))
+
+    for name, command_prefix in (adapter_commands or {}).items():
+        app.command(name, context_settings=PROXY_CONTEXT, help=f"Run `{' '.join(command_prefix)}` in the app container; arguments pass through.")(
+            _adapter_command(name, command_prefix)
+        )
+    return app
+
+
+def _adapter_command(name: str, command_prefix: list[str]) -> Callable[[typer.Context], int]:
+    def command(ctx: typer.Context) -> int:
+        def action() -> int:
+            project = root()
+            config = read_config(project)
+            prefix = compose_prefix(project, config)
+            return run(prefix + ["exec", *tty_flags(), config.app_service, *command_prefix, *proxy_tail(name, 1)], project)
+        return execute(action)
+    command.__name__ = f"{name}_command"
+    return command
+
+
+def up() -> int:
+    project = root()
+    config = read_config(project)
+    problems = stub_problems(project, config)
+    if problems:
+        fail(" ".join(problems))
+    warning = stub_version_warning(project)
+    if warning:
+        warn(warning)
+    prefix = compose_prefix(project, config)
+    # A session left by an earlier container must go before Compose recreates it.
+    stop_mutagen(project, required=mutagen_enabled())
+    code = run(prefix + ["up", "--build", "--detach"], project)
+    if code != 0:
+        return code
+    model = build_compose(config, project)
+    if mutagen_enabled():
+        try:
+            start_mutagen(prefix, project, (config.app_service, *config.processes))
+        except ConfigError:
+            run(prefix + ["down"], project)
+            raise
+    port = wait_for_stack(prefix, set(model["services"]), config.app_service)
+    typer.echo(f"The stack is running: http://127.0.0.1:{port}")
+    return 0
+
+
+def database_shell(instance: str | None) -> int:
+    project = root()
+    config = read_config(project)
+    registry = load_extensions(config)
+    databases = [item for item in resolve_selections(config, registry) if item.group == "database"]
+    if not databases:
+        fail("No database is selected; add one with `ship init --database postgres` (or mysql).")
+    if instance is None:
+        chosen = next((item for item in databases if item.instance_name is None), None)
         if chosen is None:
-            raise ConfigError("Select a database instance with `ship db --service NAME`.")
-        _, service, spec = chosen
-        shell = getattr(service, "database_shell", None)
-        if shell is None:
-            raise ConfigError(f"Database service {service.key!r} does not provide an interactive shell.")
-        command = prefix + ["exec", spec["name"], *shell(config, spec)]
-    elif args.command == "exec":
-        if not args.args:
-            raise ConfigError("ship exec requires a command after the service name.")
-        command = prefix + ["exec", args.service, *args.args]
-    elif args.command == "manage":
-        adapters, _ = load_extensions(config)
-        adapter = adapters[config.framework]
-        manage_prefix = adapter.console_commands().get("manage")
-        if manage_prefix is None:
-            raise ConfigError("The selected framework has no manage command.")
-        command = prefix + ["exec", "app", *manage_prefix, *args.args]
-    elif args.command == "npm":
-        _, definitions = load_extensions(config)
-        node_services = [(id, spec) for id, service, spec in selected_services(config, definitions) if service.key == "node"]
-        if len(node_services) != 1:
-            raise ConfigError("ship npm requires exactly one Node frontend service.")
-        command = prefix + ["exec", node_services[0][1]["name"], "npm", *args.args]
+            names = ", ".join(str(item.instance_name) for item in databases)
+            fail(f"No default database is selected; name one of the additional instances: {names}.")
     else:
-        raise ConfigError(f"Unknown command {args.command!r}.")
-    completed = subprocess.run(command, cwd=root, check=False)
-    if args.command == "up" and completed.returncode == 0:
-        if mutagen_enabled():
-            try:
-                start_mutagen(prefix, root, ("app", *config.processes))
-            except ConfigError:
-                subprocess.run(prefix + ["down"], cwd=root, check=False)
-                raise
-        wait_for_stack(prefix, set(build_compose(config, root)["services"]))
-        print("Ship stack is running and the app port is reachable.")
-    return completed.returncode
+        chosen = next((item for item in databases if item.instance_name == instance), None)
+        if chosen is None:
+            names = ", ".join(str(item.instance_name) for item in databases if item.instance_name) or "none"
+            fail(f"No database instance named {instance!r}; additional database instances: {names}.")
+    assert chosen is not None
+    shell = getattr(chosen.service, "database_shell", None)
+    if shell is None:
+        fail(f"The {chosen.service.key!r} service doesn't provide a database shell.")
+    command = shell(chosen.context(config, project, ShipEnvironment.DEVELOPMENT))
+    prefix = compose_prefix(project, config)
+    return run(prefix + ["exec", *tty_flags(), chosen.service_name, *command], project)
+
+
+def uv(arguments: list[str]) -> int:
+    project = root()
+    config = read_config(project)
+    if not arguments:
+        fail("ship uv requires uv arguments, such as `ship uv add httpx` or `ship uv lock`.")
+    if arguments[0] in UV_STATEFUL:
+        fail(
+            f"`uv {arguments[0]}` would change an environment that disappears with the temporary container. "
+            "Run `ship up` to install dependencies into the app image, or `ship exec app ...` to run app commands."
+        )
+    require_docker()
+    python = ".".join(config.python.split(".")[:2])
+    image = f"ghcr.io/astral-sh/uv:{UV_VERSION}-python{python}-trixie-slim"
+    command = [
+        "docker", "run", "--rm", "--interactive",
+        "--volume", f"{project.resolve()}:/app", "--workdir", "/app",
+        "--env", "HOME=/tmp", "--env", "UV_CACHE_DIR=/tmp/ship-uv-cache",
+        "--env", "UV_PROJECT_ENVIRONMENT=/tmp/ship-uv-venv",
+        "--env", "UV_NO_SYNC=1", "--env", f"UV_PYTHON=python{python}",
+    ]
+    if sys.platform.startswith("linux") and hasattr(os, "getuid"):
+        command += ["--user", f"{os.getuid()}:{os.getgid()}"]
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        command.append("--tty")
+    return run(command + [image, "uv", *arguments], project)
+
+
+def doctor() -> int:
+    project = root()
+    problems = config_problems(project, production=False)
+    for problem in problems:
+        typer.echo(f"ship: {problem}", err=True)
+    if problems:
+        return 1
+    config = read_config(project)
+    model = build_compose(config, project)
+    typer.echo(f"python-ship {__version__}; project {model['name']}; Python {config.python}; "
+               f"framework {config.framework}; ASGI server {config.server}")
+    typer.echo(f"Published ship/Dockerfile: python-ship {published_version(project) or 'unknown'}")
+    warning = stub_version_warning(project)
+    if warning:
+        warn(warning)
+    prefix = compose_prefix(project, config)
+    result = subprocess.run(prefix + ["ps", "--all", "--format", "json"], cwd=project, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        fail(f"Could not inspect Docker Compose: {result.stderr.strip()}. Check that Docker is running.")
+    found = records(result.stdout)
+    fatal, pending, port = status(found, set(model["services"]), config.app_service)
+    for name, service in model["services"].items():
+        record = found.get(name, {})
+        health = record.get("Health")
+        typer.echo(f"{name}: {service.get('image', 'built from ' + service.get('build', {}).get('dockerfile', 'a Dockerfile'))}; "
+                   f"{record.get('State', 'missing')}" + (f"; health {health}" if health else ""))
+    if fatal or pending:
+        for problem in (*fatal, *pending):
+            typer.echo(f"ship: {problem}", err=True)
+        typer.echo("ship: run `ship logs SERVICE` to see why, then `ship up` to rebuild or restart the stack.", err=True)
+        return 1
+    typer.echo(f"Every service is running; the app is published at http://127.0.0.1:{port}")
+    return 0
+
+
+# Entry point ------------------------------------------------------------------------------------
+
+def _root_from_argv(argv: list[str]) -> Path:
+    for index, argument in enumerate(argv):
+        if argument == "--project-directory" and index + 1 < len(argv):
+            return Path(argv[index + 1]).resolve()
+        if argument.startswith("--project-directory="):
+            return Path(argument.split("=", 1)[1]).resolve()
+        if not argument.startswith("-"):
+            break
+    return Path.cwd()
+
+
+def discover_adapter_commands(project: Path) -> dict[str, list[str]]:
+    """The selected adapter's console commands, registered like PHP Ship's artisan/console.
+
+    A project whose ship.json can't be read yet simply gets no extra commands;
+    `ship config:test` reports why.
+    """
+    if not (project / "ship.json").is_file():
+        return {}
+    try:
+        config = ShipConfig.read(project)
+        registry: Registry = load_extensions(config)
+        return console_commands(registry.adapter(config))
+    except (ConfigError, OSError):
+        return {}
 
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     token = _raw_argv.set(argv)
     root_token = _project_root.set(None)
-    # Typer detects the shell from the parent process by default. Accept an
-    # explicit shell for scripts and terminals where detection is unavailable.
+    # Typer detects the shell from the parent process; accept an explicit one for scripts.
     explicit_completion = argv[:1] == ["--show-completion"] and len(argv) > 1 and argv[1] in {
-        "bash", "zsh", "fish", "powershell", "pwsh"
+        "bash", "zsh", "fish", "powershell", "pwsh",
     }
-    old_completion_mode = os.environ.get("_TYPER_COMPLETE_TEST_DISABLE_SHELL_DETECTION")
+    previous = os.environ.get("_TYPER_COMPLETE_TEST_DISABLE_SHELL_DETECTION")
     if explicit_completion:
         os.environ["_TYPER_COMPLETE_TEST_DISABLE_SHELL_DETECTION"] = "1"
     try:
-        return app(args=argv, prog_name="ship", standalone_mode=False) or 0
+        app = create_app(discover_adapter_commands(_root_from_argv(argv)))
+        # A bare `ship` lists the commands and succeeds, like PHP Ship.
+        result = app(args=argv or ["--help"], prog_name="ship", standalone_mode=False)
+        return result if isinstance(result, int) else 0
+    except KeyboardInterrupt:
+        typer.echo("\nInterrupted.", err=True)
+        return 130
     except Exception as exc:
+        # Typer's (and, before 0.28, Click's) usage errors, Exit and Abort. Matched by shape
+        # because Typer 0.28+ vendors Click privately.
+        if type(exc).__name__ == "Abort":
+            typer.echo("\nAborted.", err=True)
+            return 130
         exit_code = getattr(exc, "exit_code", None)
-        if isinstance(exit_code, int) and hasattr(exc, "show"):
-            exc.show()
+        if isinstance(exit_code, int):
+            show = getattr(exc, "show", None)
+            if callable(show):
+                show()
             return exit_code
         raise
     finally:
         _raw_argv.reset(token)
         _project_root.reset(root_token)
         if explicit_completion:
-            if old_completion_mode is None:
+            if previous is None:
                 os.environ.pop("_TYPER_COMPLETE_TEST_DISABLE_SHELL_DETECTION", None)
             else:
-                os.environ["_TYPER_COMPLETE_TEST_DISABLE_SHELL_DETECTION"] = old_completion_mode
+                os.environ["_TYPER_COMPLETE_TEST_DISABLE_SHELL_DETECTION"] = previous
+

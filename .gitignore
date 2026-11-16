@@ -9,3 +9,6 @@ build/
 .env.*
 !.env.example
 ship/compose.generated.json
+.ruff_cache/
+.mypy_cache/
+examples/*/build/

@@ -11,7 +11,6 @@ from urllib.request import Request, urlopen
 
 from .config import ConfigError
 
-
 UV_VERSION = "0.13.3"
 
 

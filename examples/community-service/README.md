@@ -1,22 +1,26 @@
-# Example HTTP service extension
+# Example HTTP service
 
-This directory is an independently installable Python distribution. It
-registers the `example-http` entry point in `python_ship.services` and uses
-the `example` service group. Install it in the same environment as the `ship`
-CLI. The service runs a small HTTP server in Docker and gives the application
-`EXAMPLE_HTTP_URL`.
+An independently installable distribution that registers `example-http` in the
+`python_ship.services` entry point group, in its own `example` group. Install
+it into the same environment as the `ship` command:
+
+```sh
+uv tool install python-ship --with ./examples/community-service
+```
 
 Select it in `ship.json`:
 
 ```json
 {
-  "framework": "generic",
-  "app": "main:app",
-  "extensions": ["example-http"],
-  "services": {"example": "example-http"}
+    "framework": "generic",
+    "app": "main:app",
+    "services": {"example": "example-http"},
+    "extensions": ["example-http"]
 }
 ```
 
-Both development and production Compose models contain the service. The
-release archive includes its Python image, so the deployment machine does not
-need this extension package.
+The service runs a small HTTP server and gives the app `EXAMPLE_HTTP_URL`. It
+reads its Compose service name from the `ServiceContext`, so `serviceNames`
+renames apply to it like any built-in service. Both Compose models include it,
+and a release archives its image, so the deployment machine doesn't need this
+package.

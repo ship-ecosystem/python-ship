@@ -284,28 +284,30 @@ Publishing the distributions publicly remains part of Phase 9.
 
 ## 9. Ship and maintain the package
 
-- [ ] Add CI for supported Python versions on Linux, macOS, and Windows:
+- [x] Add CI for supported Python versions on Linux, macOS, and Windows:
   tests, typing/lint checks, packaging checks, and Compose model checks.
 - [ ] Add Docker-backed CI for generic ASGI, Django, FastAPI, selected
   services, production builds, portable releases, and Mutagen where available.
 - [ ] Keep workflow permissions narrow and pin build tooling and external
   downloads; automate review of image and dependency updates.
-- [ ] Complete user documentation for quick start, all commands, config,
+- [x] Complete user documentation for quick start, all commands, config,
   extensions, production deployment, HTTPS/reverse proxy, backup/restore,
   frontend HMR, file ownership, and Windows/macOS sync.
 - [ ] Confirm the PyPI distribution name, create the `python-ship/ship` GitHub
   repository, build wheel and source distribution, test installation from the
   artifacts, then publish the first release.
 
-Phase 9 local preparation: `scripts/check_local.py` runs pinned lint and type
-checks, unit tests, and `scripts/check_package.py`. The package check builds a
-wheel and source distribution, installs each in a fresh environment, and
-exercises the installed `ship` CLI against a plain ASGI project. Quick start,
-command reference, and production deployment guides are in `docs/`.
-The GitHub repository exists, and a pending PyPI trusted publisher is
-configured. A tag-gated, OIDC-based workflow is prepared in
-`publish-pypi.yml`. Broader CI and user documentation, the GitHub `pypi`
-environment review gate, and the first public upload remain open.
+Phase 9 progress: the 15-job Linux/macOS/Windows quality matrix passed for
+Python 3.11–3.15. It runs pinned lint and type checks, unit and Compose
+tests, then builds and installs both wheel and source distributions in clean
+environments. The Docker integration workflow covers development adapters,
+selected services, production, Mutagen, and separately installed community
+examples; its first run is under review. The portable-release boot workflow
+passes on a fresh Docker-only runner. User guides in `docs/` now cover the
+configuration and operations listed above. The GitHub repository and `pypi`
+environment exist, and a pending PyPI trusted publisher is configured. The
+tag-gated OIDC publishing workflow is prepared in `publish-pypi.yml`; no
+release tag or first upload has been made.
 
 **Completion criterion:** a framework-free Python app, a Django app, and a
 FastAPI app can each go from `ship init` to a verified development stack and a

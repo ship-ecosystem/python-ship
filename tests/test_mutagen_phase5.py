@@ -110,7 +110,9 @@ class MutagenTests(unittest.TestCase):
                 "worker": ["python", "-c", "import time; time.sleep(600)"],
             }).write(self.root)
             try:
-                self.assertEqual(0, main(["--project-directory", str(self.root), "up"]))
+                with redirect_stderr(StringIO()) as errors:
+                    result = main(["--project-directory", str(self.root), "up"])
+                self.assertEqual(0, result, errors.getvalue())
                 model = build_compose(ShipConfig.read(self.root), self.root)
                 self.assertNotIn("volumes", model["services"]["app"])
                 compose_path = self.root / "ship" / "compose.generated.json"

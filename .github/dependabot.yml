@@ -1,0 +1,22 @@
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /examples/community-adapter
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /examples/community-service
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /src/python_ship/templates/garage
+    schedule:
+      interval: weekly

@@ -63,13 +63,15 @@ GITIGNORE = (
 )
 
 VITE_SNIPPET = """\
+const port = Number(process.env.VITE_PORT ?? 5173);
+
 export default defineConfig({
     // ...
     server: {
-        host: '0.0.0.0',        // bind inside the container, not just loopback
-        port: Number(process.env.VITE_PORT ?? 5173),
-        strictPort: true,       // fail fast instead of silently picking an unpublished port
-        hmr: { host: 'localhost' }, // what the browser connects back to
+        host: '0.0.0.0',   // bind inside the container, not just its loopback
+        port,              // the port Ship publishes on the host
+        strictPort: true,  // fail fast instead of silently picking an unpublished port
+        origin: `http://localhost:${port}`, // asset URLs for pages your Python app renders
     },
 });"""
 
@@ -327,12 +329,12 @@ def _vite_reminder(root: Path, config: ShipConfig) -> str | None:
     dependencies = {**data.get("dependencies", {}), **data.get("devDependencies", {})} if isinstance(data, dict) else {}
     if "vite" not in dependencies:
         return None
-    for name in ("vite.config.js", "vite.config.ts", "vite.config.mjs", "vite.config.mts"):
+    for name in ("vite.config.js", "vite.config.ts", "vite.config.mjs", "vite.config.mts", "vite.config.cjs", "vite.config.cts"):
         config_file = root / name
         if config_file.is_file() and re.search(r"0\.0\.0\.0|host:\s*true", config_file.read_text(encoding="utf-8")):
             return None
-    return ("Vite runs in the node container, so its dev server must bind 0.0.0.0 and tell the browser where "
-            "to connect for HMR. Add this to your vite.config.js:\n\n" + VITE_SNIPPET)
+    return ("Vite runs in the node container, so its dev server must bind 0.0.0.0 on the port Ship publishes "
+            "for the page and its HMR WebSocket to reach the browser. Add this to your vite.config.js:\n\n" + VITE_SNIPPET)
 
 
 def run_init(root: Path, options: InitOptions) -> int:

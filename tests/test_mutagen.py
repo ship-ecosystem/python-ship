@@ -10,6 +10,7 @@ from unittest.mock import patch
 from python_ship.compose import compose_path
 from python_ship.config import ConfigError, ShipConfig
 from python_ship.mutagen import IGNORES, _label, enabled, start, stop
+from tests import vite
 from tests.helpers import DockerProjectTestCase, ProjectTestCase, captured, flag, free_port, wait_http
 
 
@@ -121,6 +122,27 @@ class LiveMutagenTests(DockerProjectTestCase):
         sessions = subprocess.run(["mutagen", "sync", "list", "--label-selector", _label(self.root), "--template", "{{range .}}{{.Name}}{{end}}"],
                                   capture_output=True, text=True)
         self.assertEqual("", sessions.stdout.strip())
+
+    def test_vite_hmr_in_the_synced_node_container(self):
+        import shutil
+        if shutil.which("mutagen") is None:
+            self.skipTest("Mutagen is required")
+        ports = {"APP_PORT": free_port(), "VITE_PORT": free_port()}
+        (self.root / ".env").write_text("".join(f"{name}={port}\n" for name, port in ports.items()))
+        vite.write_project(self.root)
+        with patch.dict(os.environ, {"SHIP_MUTAGEN": "1"}):
+            self.assertEqual(0, self.init("--app", "main:app", "--frontend", "node"))
+            try:
+                with captured() as output:
+                    self.assertEqual(0, self.ship("up"), output.stderr)
+                inspect = subprocess.run(["docker", "compose", "-f", str(compose_path(self.root)), "exec", "-T", "node", "sh", "-c",
+                                          "test -f /app/vite.config.js && ! grep -q ' /app ' /proc/self/mounts"],
+                                         cwd=self.root, capture_output=True, text=True)
+                self.assertEqual(0, inspect.returncode, "node should see a Mutagen copy, not a bind mount")
+                vite.assert_hmr(self, self.root, ports["VITE_PORT"], ports["APP_PORT"], self.ship)
+            finally:
+                with captured():
+                    self.assertEqual(0, self.ship("down"))
 
 
 if __name__ == "__main__":

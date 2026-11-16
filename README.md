@@ -693,21 +693,36 @@ it is not a backup.
 
 Select `--frontend node`, then `ship npm install` and `ship npm run dev`. The
 Node container publishes `${VITE_PORT:-5173}` on `127.0.0.1` — the same port
-inside and outside — but Vite has to bind somewhere reachable from outside the
-container and tell the browser where to connect back. Add this to
-`vite.config.js` (`ship init` prints it whenever Vite is installed and the
-config doesn't handle it yet):
+inside and outside — but Vite binds the container's loopback by default, which
+the published port can't reach. Add this to `vite.config.js` (`ship init`
+prints it whenever Vite is installed and the config doesn't bind a host yet):
 
 ```js
+const port = Number(process.env.VITE_PORT ?? 5173);
+
 export default defineConfig({
     server: {
-        host: '0.0.0.0',        // bind inside the container, not just loopback
-        port: Number(process.env.VITE_PORT ?? 5173),
-        strictPort: true,       // fail fast instead of silently picking an unpublished port
-        hmr: { host: 'localhost' }, // what the browser connects back to
+        host: '0.0.0.0',   // bind inside the container, not just its loopback
+        port,              // the port Ship publishes on the host
+        strictPort: true,  // fail fast instead of silently picking an unpublished port
+        origin: `http://localhost:${port}`, // asset URLs for pages your Python app renders
     },
 });
 ```
+
+That is all HMR needs. Vite's browser client opens its WebSocket to the host
+and port it was loaded from, so open the dev server at
+`http://localhost:5173`, or load `http://localhost:5173/@vite/client` and your
+entry module from a template your app renders (as django-vite does). Vite allows `localhost` origins by default, so a page on
+`APP_PORT` can load its modules cross-origin, and `origin` makes imported
+assets resolve against Vite rather than your app. Leave out `hmr.host`: the
+browser then reconnects to wherever the client came from.
+
+File changes reach Vite's watcher directly on Linux and macOS. Docker Desktop
+doesn't forward file events from Windows folders, so on Windows Ship sets
+`CHOKIDAR_USEPOLLING=true` for the Node container. Under
+[Mutagen](#faster-file-sync-on-windowsmacos-mutagen) the Node container gets
+its own sync session instead, so events are native and polling is off.
 
 Set `VITE_PORT` in `.env` to move both sides at once. Node isn't part of the
 production stack. To compile assets into the production image, set
@@ -757,8 +772,9 @@ pointless on Linux — so it's an environment variable, not a `ship.json` field:
 SHIP_MUTAGEN=1 ship up
 ```
 
-`ship up` creates a sync session for the app and each `processes` entry after
-the stack starts, and waits for the first sync before reporting success;
+`ship up` creates a sync session for every container that mounts the project
+(the app, each `processes` entry and Celery container, and the Node frontend)
+after the stack starts, and waits for the first sync before reporting success;
 `ship down` terminates them. Requires the [Mutagen CLI](https://mutagen.io/documentation/introduction/installation/)
 on `PATH`. Virtual environments, `node_modules`, caches, build output, `.env`
 files and VCS data are excluded — dependencies are installed into the image,

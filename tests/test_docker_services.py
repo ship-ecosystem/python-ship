@@ -14,6 +14,7 @@ import unittest
 from unittest.mock import patch
 from urllib.request import Request, urlopen
 
+from tests import vite
 from tests.helpers import DockerProjectTestCase, captured, flag, free_port, wait_http
 
 S3_ROUND_TRIP = (
@@ -108,6 +109,11 @@ class ServiceCatalogDockerTests(DockerProjectTestCase):
         finally:
             os.killpg(process.pid, signal.SIGTERM)
             process.wait(timeout=10)
+
+    def test_node_runs_vite_with_hmr_through_the_published_port(self):
+        vite.write_project(self.root)
+        self.up("--frontend", "node")
+        vite.assert_hmr(self, self.root, self.ports["VITE_PORT"], self.ports["APP_PORT"], self.ship)
 
     def test_playwright_browser_opens_the_app(self):
         (self.root / "requirements.txt").write_text("playwright==1.64.1\n")

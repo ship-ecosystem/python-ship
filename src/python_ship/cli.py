@@ -419,7 +419,7 @@ def up() -> int:
     model = build_compose(config, project)
     if mutagen_enabled():
         try:
-            start_mutagen(prefix, project, tuple(model["x-ship"]["app_services"]))
+            start_mutagen(prefix, project, tuple(model["x-ship"]["sync_services"]))
         except ConfigError:
             run(prefix + ["down"], project)
             raise

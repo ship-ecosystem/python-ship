@@ -194,6 +194,28 @@ class DevelopmentModelTests(ProjectTestCase):
         self.assertNotIn("volumes", app)
         self.assertNotIn("user", app)
 
+    def test_every_service_with_the_project_mount_is_synced(self):
+        config = ShipConfig(app="main:app", services={"frontend": "node", "cache": "redis"}, processes={"worker": "python w.py"})
+        with patch.dict(os.environ, {"SHIP_MUTAGEN": ""}):
+            model = self.model(config)
+        self.assertEqual(["app", "node", "worker"], sorted(model["x-ship"]["sync_services"]))
+        self.assertEqual(["app", "worker"], model["x-ship"]["app_services"])
+        self.assertIn(".:/app", model["services"]["node"]["volumes"])
+        with patch.dict(os.environ, {"SHIP_MUTAGEN": "1"}):
+            model = self.model(config)
+        self.assertEqual(["app", "node", "worker"], sorted(model["x-ship"]["sync_services"]))
+        self.assertEqual(["node_modules:/app/node_modules"], model["services"]["node"]["volumes"])
+        self.assertNotIn("volumes", model["services"]["worker"])
+        self.assertNotIn("sync_services", self.model(config, production=True)["x-ship"])
+
+    def test_vite_watcher_polls_only_on_a_windows_bind_mount(self):
+        config = ShipConfig(app="main:app", services={"frontend": "node"})
+        for platform, mutagen, polls in (("linux", "", False), ("darwin", "", False), ("win32", "", True), ("win32", "1", False)):
+            with self.subTest(platform=platform, mutagen=mutagen), patch("python_ship.services.sys.platform", platform), \
+                    patch.dict(os.environ, {"SHIP_MUTAGEN": mutagen}):
+                environment = self.model(config)["services"]["node"]["environment"]
+            self.assertEqual(polls, environment.get("CHOKIDAR_USEPOLLING") == "true")
+
 
 class ProductionModelTests(ProjectTestCase):
     def test_production_model(self):

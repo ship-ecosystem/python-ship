@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import sys
 from typing import Any
 
 from .contracts import ServiceContext, ServiceDefinition
+from .mutagen import enabled as mutagen_enabled
 from .production import read_env
 from .storage import BUILTIN_STORAGE
 
@@ -322,13 +324,19 @@ class NodeService:
     def compose_fragment(self, context: ServiceContext) -> dict[str, dict[str, Any]]:
         if context.production:
             return {}
+        environment = {"VITE_PORT": "${VITE_PORT:-5173}"}
+        if sys.platform == "win32" and not mutagen_enabled():
+            # Docker Desktop doesn't forward file events from Windows folders into containers,
+            # so Vite's watcher (chokidar) polls; under Mutagen the files are local and events work.
+            environment["CHOKIDAR_USEPOLLING"] = "true"
         return {context.service_name: {
             "image": "node:24.18.0-alpine3.24",
+            "init": True,
             "working_dir": "/app",
             "volumes": [".:/app", "node_modules:/app/node_modules"],
             "command": ["sleep", "infinity"],
             "ports": ["127.0.0.1:${VITE_PORT:-5173}:${VITE_PORT:-5173}"],
-            "environment": {"VITE_PORT": "${VITE_PORT:-5173}"},
+            "environment": environment,
         }}
 
     def app_environment(self, context: ServiceContext) -> dict[str, str]:

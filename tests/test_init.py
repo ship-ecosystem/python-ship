@@ -256,6 +256,15 @@ class ViteReminderTests(ProjectTestCase):
         (self.root / "vite.config.js").write_text("export default { server: { host: '0.0.0.0' } }\n")
         self.assertEqual(0, self.init())
         self.assertNotIn("host: '0.0.0.0'", self.init_output.stderr)
+        (self.root / "vite.config.js").unlink()
+        (self.root / "vite.config.cjs").write_text("module.exports = { server: { host: true } }\n")
+        self.assertEqual(0, self.init())
+        self.assertNotIn("host: '0.0.0.0'", self.init_output.stderr)
+
+    def test_snippet_publishes_the_port_and_origin(self):
+        from python_ship.init import VITE_SNIPPET
+        for fragment in ("host: '0.0.0.0'", "process.env.VITE_PORT", "strictPort: true", "origin: `http://localhost:${port}`"):
+            self.assertIn(fragment, VITE_SNIPPET)
 
 
 class UvRequirementTests(ProjectTestCase):

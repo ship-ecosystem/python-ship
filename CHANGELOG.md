@@ -33,6 +33,10 @@ The first public release.
   vulnerabilities are refused, both in `ship.json` and in the image build.
 - Typed extension contracts for community services, adapters and ASGI
   servers, loaded from entry points.
-- Optional Mutagen file sync for Windows and macOS.
+- Optional Mutagen file sync for Windows and macOS, covering every container
+  that mounts the project, the Node frontend included.
+- Vite HMR through the Node container, verified against a real Vite dev
+  server: `ship init` prints the config it needs, and the watcher polls on
+  Windows bind mounts.
 
 [0.1.0]: https://github.com/ship-ecosystem/python-ship/releases/tag/v0.1.0

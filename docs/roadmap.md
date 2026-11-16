@@ -114,6 +114,10 @@ runtimes, uv instead of Composer, `processes` workers instead of Reverb.
 - `processes` share the app image, environment and networks, have no ports,
   get a 60s stop grace period, and accept a shell string (with `$` escaped
   for Compose) or an argument list.
+- The Node frontend serves Vite with HMR on `VITE_PORT`; a live test drives a
+  real Vite dev server's WebSocket through the published port. Under Mutagen
+  every container that mounts the project is synced (Node included), and on
+  Windows bind mounts Vite's watcher polls.
 
 ### Images
 

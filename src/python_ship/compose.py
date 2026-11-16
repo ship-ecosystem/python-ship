@@ -20,6 +20,9 @@ from .plugins import Registry, load_extensions
 from .security import build_arg as python_floor
 from .services import BROWSER_APP_HOST
 
+# The development bind mount; under Mutagen every service with it is synced instead.
+PROJECT_MOUNT = ".:/app"
+
 DEVELOPMENT_FILE = "docker-compose.generated.yml"
 PRODUCTION_FILE = "docker-compose.production.yml"
 SERVICE_NAME = re.compile(r"[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*")
@@ -255,8 +258,7 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
         if config.publish_ports:
             app["ports"] = ["${APP_PORT:-8000}:8000"]
     else:
-        if not mutagen_enabled():
-            app["volumes"] = [".:/app"]
+        app["volumes"] = [PROJECT_MOUNT]
         app["ports"] = ["127.0.0.1:${APP_PORT:-8000}:8000"]
         # Lets a debugger in the container (debugpy) reach the IDE on the host.
         app["extra_hosts"] = ["host.docker.internal:host-gateway"]
@@ -379,6 +381,17 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
         services[process] = model
     # Every container that runs the app's code, for Mutagen sync and the deploy script.
     compose["x-ship"] = {"app_services": [app_name, *(process for process, _ in processes)]}
+    if not production:
+        # Every container that sees the project at /app (the app, its processes, Node for Vite).
+        synced = [service_name for service_name, model in services.items() if PROJECT_MOUNT in model.get("volumes", [])]
+        compose["x-ship"]["sync_services"] = synced
+        if mutagen_enabled():
+            for service_name in synced:
+                mounts = [mount for mount in services[service_name]["volumes"] if mount != PROJECT_MOUNT]
+                if mounts:
+                    services[service_name]["volumes"] = mounts
+                else:
+                    del services[service_name]["volumes"]
 
     if production:
         for service_name, model in services.items():

@@ -259,9 +259,11 @@ forced app crash. Missing credentials failed before Docker. A second boot used
 a separate Docker daemon with zero starting images and containers. It loaded
 the release archives, ran the deploy command, served an HTTP response backed
 by PostgreSQL, verified the database row, and served again after an app
-restart. The temporary daemon was removed afterward. A two-job CI workflow is
-prepared to repeat the build and boot on separate fresh runners; its first
-GitHub run remains pending.
+restart. The temporary daemon was removed afterward. The
+[two-job CI workflow](https://github.com/ship-ecosystem/python-ship/actions/runs/43799124805)
+also passed: one runner built and exported the release, and a fresh runner
+loaded its archives and verified deployment, HTTP, database, and restart
+behavior without a source checkout or Ship CLI.
 
 ## 8. Prove the community extension model
 

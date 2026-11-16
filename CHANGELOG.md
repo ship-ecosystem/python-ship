@@ -5,7 +5,7 @@ All notable changes to python-ship are documented here. The format follows
 uses [Semantic Versioning](https://semver.org/): before 1.0, a minor release
 may change the extension contracts or `ship.json`, and says how here.
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2026-11-16
 
 The first public release.
 

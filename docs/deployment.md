@@ -74,3 +74,5 @@ service image choices before exposing a deployment publicly.
 The [command reference](commands.md) covers local operations. The
 [extension guide](extensions.md) explains how community service and adapter
 packages affect a production model.
+The [operations guide](operations.md) covers HTTPS, backups, restoration, and
+development file synchronization.

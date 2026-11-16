@@ -30,6 +30,7 @@ The pending PyPI publisher will create the project on the first successful
 upload; this version is not published yet.
 
 Read the [quick start](docs/quickstart.md), [command reference](docs/commands.md),
+[configuration guide](docs/configuration.md), [operations guide](docs/operations.md),
 and [production deployment guide](docs/deployment.md) for task-focused steps.
 Maintainers can use the [publishing guide](docs/releasing.md).
 

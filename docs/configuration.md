@@ -30,7 +30,7 @@ provide more [adapters and services](extensions.md).
 | `services` | `{}` | One service per group, for example `database`, `cache`, `mail`, `search`, `storage`, `testing`, or `frontend`. |
 | `instances` | `{}` | Additional named service selections. |
 | `networks` | `{}` | Alias to an existing external Docker network name. |
-| `extensions` | `[]` | Installed adapter or service entry point names. |
+| `extensions` | `[]` | Installed adapter, service, or ASGI server entry point names. |
 | `silo_image` | `distroless` | Silo storage image variant: `distroless` or `standard`. |
 | `publish_ports` | `false` | Publish the production app port on the host. |
 | `processes` | `{}` | Additional app-image services, each with a command argument list. |

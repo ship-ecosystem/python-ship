@@ -1,324 +1,195 @@
-# Roadmap to PHP Ship feature parity
+# Roadmap
 
-This is the working checklist for Python Ship. The target is the **capability**
-of [PHP Ship](https://github.com/php-ship/ship) today: a portable development
-stack, extensible services and framework support, reliable diagnostics, and a
-Docker-only production release. Python-specific choices replace PHP-specific
-features; for example, ASGI servers and Python worker processes replace PHP
-runtimes and Reverb.
+What python-ship does today, grouped by area, and what's next. The README is
+the user-facing reference; this file is the maintainer's overview and records
+the non-obvious reasons behind each decision. Python-ship follows PHP Ship's
+interface (commands, `ship.json` field names, the release artifact) and
+replaces PHP-specific parts with Python ones: ASGI servers instead of PHP
+runtimes, uv instead of Composer, `processes` workers instead of Reverb.
 
-Work through the phases in order. Check an item only after its behavior is
-implemented, documented, and verified at the level the item describes. Keep
-this file current in the same change that completes an item. A phase is complete
-when every item in it is checked. Do not treat a unit test or a valid Compose
-file as proof that containers run correctly.
+## What's built
 
-## 0. Establish the package and contracts
+### Extension points
 
-- [x] Create `com.ship.python` as a separate Git repository with Python package
-  metadata, the `ship` command, and a public README.
-- [x] Define separate framework adapter and infrastructure service contracts.
-- [x] Include a generic ASGI adapter plus built-in Django and FastAPI adapters.
-- [x] Load explicitly selected third-party adapters and services from Python
-  package entry points.
-- [x] Supply Uvicorn as the initial default server and generate a Dockerfile
-  that installs it with uv, including for an app with no dependency manifest.
-- [x] Require uv at `ship init`; ask before installing it; cancel without
-  project-file changes on refusal or installation failure. These paths have
-  mocked unit coverage; real installer checks remain in phase 5.
-- [x] Generate a development Compose model for a plain ASGI app, Django, or
-  FastAPI; Docker Compose accepts each model with `config --quiet`.
-- [x] Add initial unit tests for config, adapters, plugins, Compose generation,
-  and uv confirmation. Current result: 38 passing tests with Docker and socket access.
+- Three typed protocols in `contracts.py`: `ServiceDefinition`,
+  `FrameworkAdapter` and `ASGIServer`, plus the optional
+  `ProvidesDatabaseShell` and `ValidatesConfiguration`. They are the public
+  API; `py.typed` ships with the package.
+- Services receive a frozen `ServiceContext`: environment, final Compose
+  name, stable resource name, instance name and variable prefix, plus
+  `credential()` and `setting()` helpers that produce the right Compose
+  expression for each environment. Everything a service needs is explicit,
+  so named instances and `serviceNames` work for community services without
+  any rewriting by the core.
+- An empty fragment means "absent in this environment": no Compose service
+  and no variables. Development-only services use it in production.
+- `plugins.load_extensions()` loads only entry points named in `extensions`,
+  across `python_ship.services`, `python_ship.adapters` and
+  `python_ship.servers`, and checks each against its contract (key, label,
+  group, required callables, optional hooks, requirement). Every failure is a
+  configuration error naming the extension.
+- `FrameworkAdapter.release_commands()` runs at every production boot before
+  the server (PHP Ship's `releaseCommands()`); `console_commands()` become
+  `ship <name>` proxies, registered only when that adapter is selected, like
+  PHP Ship's `artisan`/`console`.
 
-## 1. Prove the framework-agnostic development path
+### Frameworks and servers
 
-- [x] Replace the scaffold's `argparse` CLI with Typer and add Typer as a
-  package dependency. Keep `ship exec` and framework command proxies able to
-  forward unknown flags and raw arguments unchanged; verify help, errors,
-  completion, exit codes, and interactive commands before removing `argparse`.
-- [x] Add a minimal, framework-free ASGI fixture with no `pyproject.toml` or
-  `requirements.txt`, plus an HTTP response assertion.
-- [x] Run `ship init`, `config:test`, `up`, `logs`, `exec`, `shell`, and `down`
-  against that fixture with a real Docker daemon on Linux.
-- [x] Verify that the image builds, uv and Uvicorn work inside it, the bind
-  mount preserves the installed environment, and code changes reload.
-- [x] Make `ship up` check container state, healthchecks, and the published port
-  before reporting success; show actionable failures when startup fails.
-- [x] Forward command arguments and exit codes exactly, including flags and
-  interactive terminal behavior, through `ship exec` and proxy commands.
-- [x] Support re-running `ship init` without losing existing selections,
-  extensions, or hand-edited config; track published stub versions and warn
-  when a stub is stale rather than replacing it silently.
-- [x] Make `config:test` report all independent config and Compose problems in
-  one pass without requiring Docker.
+- Built-in adapters: `generic` (any ASGI callable, no framework or manifest
+  needed), `django` and `fastapi`. Each detects its project and suggests the
+  ASGI target for `ship init`, and validates the target statically with
+  `ast`, without importing project code on the host.
+- Django: `ship manage`, `check --deploy` at every production boot, and
+  `collectstatic` with `djangoCollectstatic`.
+- Built-in servers: Uvicorn (default) and Hypercorn, pinned exactly. Server
+  choice is independent of the framework. Production Uvicorn runs with
+  `--proxy-headers` and honours `WEB_CONCURRENCY` and `FORWARDED_ALLOW_IPS`.
 
-Phase 1 verified on Linux with a temporary plain ASGI project: the image built,
-uv and Uvicorn ran in the container, HTTP returned 200, bind mount edits reloaded,
-the interactive shell and lifecycle commands worked, a real healthcheck became
-healthy, and a restarting container produced an actionable error. The full suite
-passed 20 tests with socket access. The ordinary sandbox still blocks local
-sockets and the Docker socket; integration checks used elevated tool access.
+### Services
 
-## 2. Prove both built-in framework adapters
+- 12 built-in services: PostgreSQL, MySQL, Redis, Mailpit, Meilisearch,
+  Garage, SeaweedFS, RustFS, Silo, Selenium, Playwright, Node.
+- Named instances (`additionalServices`) for `database`, `cache`, `storage`,
+  `search` and `mail`: Compose service `{key}-{name}`, variable prefix
+  `{NAME}_`, volume `{key}-{name}_data`. Same naming rule as PHP Ship.
+- Every stateful service keeps data in a named volume and has a healthcheck;
+  the app waits for healthy dependencies. Redis keeps RDB snapshots and an
+  append-only log.
+- Secrets go through `ServiceContext.credential()`: an overridable default in
+  development, `${VAR:?...}` in production. `ship config:test`/`build`/
+  `release` also reject a production value equal to a development default.
+- MySQL: separate `DB_ROOT_PASSWORD`; the healthcheck pings `127.0.0.1`
+  because a socket ping succeeds against the init-phase server;
+  `DB_USER=root` is rejected up front.
+- Storage: SeaweedFS generates an S3 identity file from the credentials at
+  boot (its gateway is unauthenticated without one); Garage provisions its
+  key and bucket and has its RPC address substituted at image build time;
+  RustFS publishes no console (its console returns AccessDenied); Silo's
+  `siloImage` picks the standard or distroless image, `ship init` asks with
+  the CPU explanation, and named Silo instances publish their console on an
+  ephemeral port.
+- Browser testing: Selenium and Playwright. The app gets a `ship-app.test`
+  alias because browsers force single-label hosts to HTTPS.
+- Meilisearch runs with `MEILI_ENV=production` in production.
 
-- [x] Add a real Django fixture and verify development HTTP, `ship manage`,
-  database access, Redis access, and useful errors for a bad ASGI target.
-- [x] Add a real FastAPI fixture and verify development HTTP, reload, database
-  access, Redis access, and useful errors for a bad app target.
-- [x] Keep framework-specific settings and commands inside adapters; verify
-  that neither built-in framework is required by a plain ASGI project.
-- [x] Define adapter hooks for development command, production command,
-  validation, and release-time actions without running migrations on every
-  container boot.
-- [x] Add documentation and tests for the app settings users must supply to
-  consume `DB_*`, `REDIS_URL`, and other injected variables.
+### Compose generation
 
-Phase 2 verified on Linux with real Django and FastAPI containers, PostgreSQL,
-and Redis. Both served HTTP and queried PostgreSQL and Redis through Ship's
-injected variables. Django management commands ran, FastAPI reloaded a bind
-mounted edit, and invalid targets produced configuration errors. The full suite
-passed 26 tests with `SHIP_DOCKER_TEST=1` and socket access.
+- `ship/docker-compose.generated.yml` and `ship/docker-compose.production.yml`
+  — the same names as PHP Ship. They are JSON, which is valid YAML, behind a
+  generated-file comment, so no YAML dependency is needed.
+- Fragments merge into existing services; a real conflict is an error naming
+  the key and the service, never a silent winner.
+- `serviceNames` renames the app or a selected service; injected hostnames
+  follow because services read `context.service_name`. Volumes don't, so a
+  rename never orphans data. `externalNetwork` attaches the app and its
+  processes to a pre-existing network.
+- Collisions between renamed services, instances and process names are
+  rejected before Docker.
+- Development ports bind `127.0.0.1`; production publishes only the app,
+  only with `publishPorts`. Every port has a variable (`APP_PORT`,
+  `VITE_PORT`, `MAILPIT_WEB_PORT`, `SILO_CONSOLE_PORT`).
+- Each file carries `name:`; production uses `<name>-production`, so the two
+  stacks never share containers or volumes.
+- The development app runs as the host UID/GID on Linux (`hostUser`, default
+  on, unlike PHP Ship's root default because Python images have no fixed
+  web-server user to match), and can reach `host.docker.internal`.
+- `processes` share the app image, environment and networks, have no ports,
+  get a 60s stop grace period, and accept a shell string (with `$` escaped
+  for Compose) or an argument list.
 
-## 3. Make Compose and extensions robust
+### Images
 
-- [x] Merge service fragments into the app and other services without erasing
-  build settings, environment, mounts, ports, networks, or dependencies.
-- [x] Validate service groups, duplicate keys, plugin failures, conflicting
-  Compose names, invalid config types, and malformed command targets clearly.
-- [x] Add named additional instances for database, cache, storage, search, and
-  mail, with separate volumes, service names, and prefixed connection variables.
-- [x] Support custom service names and external networks while correcting DNS
-  host references and `depends_on` references.
-- [x] Support the conventional Compose override file consistently for every
-  development command; test path resolution from other working directories.
-- [x] Add optional service capabilities for database shells and config-aware
-  fragments; omit development-only services from production cleanly.
-- [x] Keep development ports on `127.0.0.1` by default and isolate project
-  networks and volumes with a stable, validated Compose project name.
+- One `ship/Dockerfile`: `base` → `builder` → `production`/`development`,
+  plus an optional `assets` Node stage. The development target is the
+  builder, so dependencies sit in `/opt/ship-venv`, outside the bind mount.
+- uv installs dependencies: `uv sync --locked` with a lockfile,
+  `uv pip install -r` for `requirements.txt`, `uv sync` for an unlocked
+  `pyproject.toml`, nothing for a manifest-free app; then the selected server.
+- Production: no uv, no pip, UID 10001, no source mount, `.env` files and
+  earlier releases excluded by `.dockerignore`.
+- `ship init` keeps an edited Dockerfile; `--force` replaces it.
+  `ship/.ship-version` records the publishing version and every command warns
+  on a mismatch.
 
-Phase 3 verified with Compose config checks and a live Linux stack containing
-two PostgreSQL and two Redis instances, an external network, an override file,
-distinct volumes, DNS names, and prefixed variables. The full suite passed 38
-tests with `SHIP_DOCKER_TEST=1` and socket access. Community service groups and
-production omission use contract tests; their real service images belong to
-later catalog and release phases.
+### Security floor
 
-## 4. Reach the Python service catalog
+- `security.MINIMUM_PATCHED` holds the first patched release per supported
+  branch (3.11.18, 3.12.16, 3.13.18, 3.14.10, 3.15.2: the October 2026
+  expedited releases). Config validation rejects end-of-life branches and
+  vulnerable pinned releases; `ship/check-python-security-floor.py` fails an
+  image build on a stale cached base image; production builds always pull.
 
-- [x] Finish PostgreSQL: persistent data, healthcheck, app connection values,
-  and `ship db` using credentials from the database container itself.
-- [x] Add MySQL with the same behavior and a separate root password; reject an
-  invalid application root user before starting Docker.
-- [x] Finish Redis persistence and healthchecks; document how Django and
-  framework-free apps opt into it.
-- [x] Add Mailpit and Meilisearch with correct dev/production behavior and
-  required credentials where applicable.
-- [x] Add S3-compatible storage choices equivalent to the PHP package's
-  Garage, SeaweedFS, RustFS, and Silo support, including their provisioning,
-  health, volume, image, and CPU constraints.
-- [x] Add Selenium and Playwright browser-testing services appropriate for
-  Python test suites, with the same easy-to-select role that Dusk/Selenium has
-  in PHP Ship; verify both in real Docker stacks.
-- [x] Support Node and frontend asset workflows, including an accessible HMR
-  port, without making Node mandatory for a plain Python app.
-- [x] Make the ASGI server/runtime selectable beyond Uvicorn, with a public
-  extension path for community server choices. Keep the app framework
-  independent from that choice.
-- [x] Pin and document service image versions; test every selected service
-  against a real Docker daemon.
+### Commands
 
-Phase 4 complete. PostgreSQL, MySQL, and Redis kept data across container
-restarts in live Docker checks. Mailpit captured SMTP mail, Meilisearch accepted
-an authenticated API request, and Node served an HTTP response through its HMR
-port. Garage, SeaweedFS, RustFS, and both Silo image variants passed live S3
-bucket and object operations. SeaweedFS rejected unknown credentials and
-accepted a secret containing a quote and backslash. Garage's build files ship
-in the wheel and are republished by `ship init` when missing. Python clients
-opened a framework-free app through both Selenium Chrome and Playwright
-Chromium. The browser services use a `.test` network alias because browsers
-force the single-label `app` host to HTTPS. Hypercorn served and reloaded a
-framework-free ASGI app in Docker; built-in framework adapters and third-party
-server entry points use the same server selection contract. Built-in service
-image tags are documented and all catalog services have live Docker checks.
+- `init`, `up`, `down`, `exec`, `shell`, `logs`, `db [instance]`,
+  `config:test`, `build`, `release`, `doctor`, `npm`, `uv`, adapter
+  commands, and `--version`. Typer provides help and shell completion; a
+  bare `ship` lists commands.
+- `ship init` is interactive on a terminal (framework, target, server, one
+  picker per group, named instances, Silo image, Python version, each
+  defaulting to the current selection) and fully scriptable with flags and
+  `--no-interaction`. It reads an existing `ship.json` leniently and carries
+  over every field it doesn't ask about. It validates the full model and
+  checks for uv before writing anything, and merges secret and generated-file
+  rules into `.gitignore` and `.dockerignore`.
+- Proxies forward raw arguments and exit codes; without a terminal they pass
+  `-T`, so piping SQL into `ship db` works.
+- `ship up` waits for containers, healthchecks and a real HTTP answer (a TCP
+  connect isn't enough: Docker's port proxy accepts before the server
+  listens), and fails fast on a crashed or unhealthy container.
+- `config:test` reports schema, stub, adapter, service, Compose and
+  credential problems in one pass, without Docker. `doctor` reports versions
+  and container health with recovery hints.
+- `ship uv` runs uv metadata commands in a temporary container with the
+  project's Python and refuses commands whose effects would vanish.
+- The override file (`docker-compose.override.yml`, or `compose.override.yaml`)
+  applies to every development command and never to production.
 
-## 5. Make development portable and predictable
+### Mutagen sync
 
-- [x] Test the actual uv installer accept, decline, install-failure, and
-  already-installed paths on Linux, macOS, and Windows; verify its executable
-  remains discoverable after installation.
-- [x] Use uv correctly for a locked `uv` project, a `requirements.txt` project,
-  an installable `pyproject.toml` project, and a dependency-free app; verify
-  generated image behavior, not only Dockerfile text.
-- [x] Provide a `ship uv` workflow for project dependency commands without
-  losing Ship's supplied server when uv syncs the environment.
-- [x] Handle host UID/GID in development so container-generated files are
-  usable on Linux; define the equivalent behavior for Windows and macOS.
-- [x] Add optional Mutagen sync for slow bind mounts on Windows/macOS; exclude
-  platform-specific environments and avoid dependency-install races.
-- [x] Verify two Ship projects can run at once without network, volume, or
-  port collisions; explain how users choose alternate host ports.
-- [x] Add service/version/stub diagnostics and clear recovery messages for
-  crashed or unhealthy containers.
+- Opt in with `SHIP_MUTAGEN=1`. The app and each process get a labelled
+  session, `ship up` waits for the first sync, `ship down` terminates it.
+  Environments, caches, build output, `.env` files and VCS data are excluded.
 
-Phase 5 progress: an isolated `uv tool install` passed with only uv-managed
-Python, so a preinstalled system Python is unnecessary for the CLI. Following
-PHP Ship's model, the cross-platform CLI has a host language runtime while
-the application runs in Docker. The official uv installer passed an isolated
-install and executable check on Linux, macOS, and Windows in the
-[host platform workflow](https://github.com/ship-ecosystem/python-ship/actions/runs/43762995074).
-Consent, decline, already-installed, and failure paths also have unit coverage
-on all three platforms. Four
-dependency modes passed a real app-image check, including an
-installable project both with and without `uv.lock`; `ship uv` now runs in an
-isolated Docker image with the selected Python version, and `ship up` rebuilds
-the app image. A live `ship uv add` also updated the lockfile without creating
-a host `.venv` or removing Uvicorn from the rebuilt app. Linux
-container-generated files retained the
-host UID/GID. Docker Desktop uses its own bind-mount ownership behavior on
-macOS and Windows. Two concurrent stacks passed port, network, and Redis data
-isolation checks. `ship doctor` reports selected service images and container
-health. Optional direct Mutagen sync passed a live Docker check: the app
-started from its built image, host code edits reached the container and
-triggered Uvicorn reload, no host `.venv` appeared, and `ship down` removed
-the project-scoped session. The source sync omits platform-specific
-environments, build output, caches, VCS directories, and `.env` files. Its
-startup waits for an initial sync flush after the image has installed app
-dependencies.
+### Production releases
 
-## 6. Build a production image and production config
+- `ship build` builds each unique image once (the app and its processes
+  share one); `ship release --tag` also exports every image, infrastructure
+  included, into `dist/ship/<tag>/` with a build-free Compose file, the
+  production `.env` (0600), `release.json` with SHA-256 digests, a README and
+  `deploy-commands.sh`. The release is staged and only replaces an earlier
+  one when every step succeeds.
+- `deployCommands` start infrastructure, wait for health, run each command in
+  a one-off app container, and stop at the first failure. Migrations are
+  never implicit.
 
-- [x] Generate separate development and production Compose files from the
-  same project config; production must have no source bind mount.
-- [x] Build a production Python image using uv and declared locks, with a
-  non-root runtime, a predictable process command, and no development tools
-  or secret files baked in.
-- [x] Put framework-specific production behavior in adapters: Django
-  deployment checks and static collection strategy; FastAPI and generic
-  ASGI startup without Django assumptions.
-- [x] Support optional Node asset builds and additional long-running Python
-  processes such as workers and schedulers from the application image.
-- [x] Require real production credentials and validate `.env.production`
-  before invoking Docker; keep production ports unpublished unless requested.
-- [x] Make `config:test` build and validate both Compose models and report
-  missing credentials, unsafe settings, and conflicting names together.
-- [x] Verify a production HTTP request, database connection, and container
-  restart for generic ASGI, Django, and FastAPI fixtures.
+### Tooling
 
-Phase 6 complete: `ship build` generates a separate Compose file
-and project name. The app has no source bind mount or published port, and
-production rejects host bind mounts from extensions. A multi-stage Dockerfile
-uses uv in the builder and runs the production app as UID 10001 without uv or
-pip. A live generic ASGI Docker check passed HTTP startup and verified that
-`.env.production` was absent from the image. Existing projects must refresh
-their published Dockerfile with `ship init --force` before using the production
-target. `config:test` validates both models and lists missing or known-default
-production credentials from `.env.production`; `ship build` checks them before
-invoking Docker. Production ports stay unpublished unless `publish_ports` is
-set. Django runs its deployment check before startup and can collect static
-files when selected; generic ASGI and FastAPI start their ASGI server directly.
-Optional npm asset builds ran in a Node build stage and copied `dist/` into
-the Python image without carrying Node into runtime. A named worker shared
-the production app image and connected to PostgreSQL. Generic ASGI, Django,
-and FastAPI each passed a production HTTP request, PostgreSQL query, and
-container restart. The Python CLI now matches PHP Ship's production command
-pattern: `config:test` validates and `build` generates/builds; the temporary
-`config:production` command was removed. Phase 7 will add image-build
-deduplication and portable releases.
+- Unit tests per component (config, security floor, adapters, Compose,
+  services, plugins, CLI, init, production, release, runtime, uv, Mutagen),
+  run on Linux, macOS and Windows with Python 3.11–3.15, and against the
+  lowest supported Typer.
+- Docker suites, run on every push to `main`, weekly, and on demand: the
+  three app types in development (HTTP, database, cache, reload, `manage`,
+  `db`), every built-in service live, production images for all three app
+  types, releases booted from a source-free directory (deploy commands,
+  restart, crash recovery), the installable examples, Mutagen, and a release
+  booted on a second, clean runner.
+- `scripts/check_local.py` mirrors CI; `scripts/check_package.py` builds the
+  wheel and sdist and initializes a project with each.
+- Workflows have read-only permissions, actions are pinned to commits,
+  downloads are checksum-verified, and publishing uses PyPI trusted
+  publishing behind a reviewed `pypi` environment and the full Docker suite.
+  Dependabot tracks Actions, Python and Dockerfiles; Renovate tracks images
+  and versions embedded in Python source.
 
-## 7. Produce portable releases
+## Next
 
-- [x] Implement `ship build` to build and tag each project-owned production
-  image, deduplicating identical builds.
-- [x] Implement `ship release --tag` with a validated tag and deterministic
-  `dist/ship/<tag>/` layout: production Compose file without `build:`, image
-  archives, release manifest, and deployment instructions.
-- [x] Package the production environment safely, exclude secrets and previous
-  releases from image build contexts, and restrict release-file permissions
-  where the platform supports them.
-- [x] Run deployment commands once per deploy in an app image, after required
-  infrastructure starts; stop on the first failure. Include migrations only
-  when the project explicitly requests them.
-- [x] Boot a release on a separate clean Docker daemon or CI environment using Docker alone,
-  load its images, run its deploy commands, and assert HTTP/database behavior.
-- [x] Test failure and recovery for a crashed app container and a missing
-  production credential.
-
-Phase 7 progress: `ship build` groups identical build definitions under one
-image tag. `ship release --tag` packages a runtime-only Compose file, private
-production environment, manifest, deployment instructions, and deduplicated
-archives for both project-owned and selected infrastructure images. A deploy
-script runs only explicitly configured commands after infrastructure is
-healthy and stops on the first failure; Django migrations are no longer
-implicit. Secret and prior-release ignores are reapplied before builds, and
-artifact permissions are restricted on POSIX. A release was copied to a
-source-free directory; its app image tag was removed and loaded from the
-archive, then Docker alone started PostgreSQL, ran the deploy command, served
-an HTTP response backed by the database, restarted, and recovered from a
-forced app crash. Missing credentials failed before Docker. A second boot used
-a separate Docker daemon with zero starting images and containers. It loaded
-the release archives, ran the deploy command, served an HTTP response backed
-by PostgreSQL, verified the database row, and served again after an app
-restart. The temporary daemon was removed afterward. The
-[two-job CI workflow](https://github.com/ship-ecosystem/python-ship/actions/runs/43799124805)
-also passed: one runner built and exported the release, and a fresh runner
-loaded its archives and verified deployment, HTTP, database, and restart
-behavior without a source checkout or Ship CLI.
-
-## 8. Prove the community extension model
-
-- [x] Provide a small third-party service example as a separate installable
-  package, selected through `ship.json`, and verify it runs in Docker.
-- [x] Provide a small third-party framework adapter example and verify it can
-  supply commands and production behavior without changing core code.
-- [x] Document the supported contracts, entry point names, version policy,
-  dependency requirements, and how plugin errors are reported.
-- [x] Test duplicate names, missing distributions, broken constructors,
-  invalid implementations, and plugin behavior across init, build, and
-  release.
-
-Both examples build as independent wheels and load through their installed
-entry points. Docker-backed checks exercised development HTTP responses,
-production builds, release creation, and HTTP responses from release archives.
-Publishing the distributions publicly remains part of Phase 9.
-
-## 9. Ship and maintain the package
-
-- [x] Add CI for supported Python versions on Linux, macOS, and Windows:
-  tests, typing/lint checks, packaging checks, and Compose model checks.
-- [ ] Add Docker-backed CI for generic ASGI, Django, FastAPI, selected
-  services, production builds, portable releases, and Mutagen where available.
-- [ ] Keep workflow permissions narrow and pin build tooling and external
-  downloads; automate review of image and dependency updates.
-- [x] Complete user documentation for quick start, all commands, config,
-  extensions, production deployment, HTTPS/reverse proxy, backup/restore,
-  frontend HMR, file ownership, and Windows/macOS sync.
-- [ ] Confirm the PyPI distribution name, create the `python-ship/ship` GitHub
-  repository, build wheel and source distribution, test installation from the
-  artifacts, then publish the first release.
-
-Phase 9 progress: the 15-job Linux/macOS/Windows quality matrix passed for
-Python 3.11–3.15. It runs pinned lint and type checks, unit and Compose
-tests, then builds and installs both wheel and source distributions in clean
-environments. Pull requests run one Python 3.13 quality job; pushes to `main`
-and manual runs retain the full 15-job matrix. Docker pull requests run the
-development smoke tests when relevant files change; `main` runs the full
-Docker suite. Superseded runs for the same branch are cancelled. The Docker
-integration workflow covers development adapters,
-selected services, production, Mutagen, and separately installed community
-examples. The development, services, production, and community jobs passed
-on GitHub; the corrected Mutagen job passed locally with the complete pinned
-archive and its next GitHub run is queued. The portable-release boot workflow
-passes on a fresh Docker-only runner. Dependabot is proposing updates for
-Python dependencies, Actions, and Dockerfiles; `renovate.json` is prepared to
-track images embedded in Python service definitions. User guides in `docs/`
-now cover the configuration and operations listed above. The GitHub
-repository and `pypi` environment exist, and a pending PyPI trusted
-publisher is configured. The tag-gated OIDC publishing workflow is prepared
-in `publish-pypi.yml`; no release tag or first upload has been made.
-
-**Completion criterion:** a framework-free Python app, a Django app, and a
-FastAPI app can each go from `ship init` to a verified development stack and a
-portable production release. Community packages can add a service or adapter
-without forking Ship. The release runs with Docker alone, and CI exercises
-those paths on the supported platforms.
+- Publish 0.1.0 to PyPI (see [`releasing.md`](releasing.md)).
+- A shared `ship.json` JSON Schema for the Ship ecosystem, so editors
+  validate both PHP and Python projects.
+- More community examples (a Flask/WSGI adapter through an ASGI bridge,
+  Granian as a server) once someone needs them.
+- Cross-service coordination beyond what `build_compose()` computes itself
+  (browser alias, `APP_URL`). Design a general mechanism when a concrete need
+  appears.

@@ -9,7 +9,6 @@ from tempfile import TemporaryDirectory
 from python_ship.cli import main as ship_main
 from python_ship.config import ShipConfig
 
-
 APP = """import os
 import psycopg
 
@@ -43,9 +42,9 @@ def main() -> None:
         (project / "main.py").write_text(APP, encoding="utf-8")
         (project / "requirements.txt").write_text("psycopg[binary]>=3,<4\n", encoding="utf-8")
         (project / ".env.production").write_text(
-            "DB_PASSWORD=ship-ci-only-password\nSHIP_PRODUCTION_PORT=18080\n", encoding="utf-8"
+            "DB_PASSWORD=ship-ci-only-password\nAPP_PORT=18080\n", encoding="utf-8"
         )
-        if main_cli(project, "init", "--app", "main:app", "--database", "postgres") != 0:
+        if main_cli(project, "init", "--no-interaction", "--app", "main:app", "--database", "postgres") != 0:
             raise SystemExit("Could not initialize the release fixture")
         config = ShipConfig.read(project)
         replace(config, name="ship-clean-release", publish_ports=True,

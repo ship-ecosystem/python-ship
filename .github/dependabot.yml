@@ -25,3 +25,7 @@ updates:
     directory: /src/python_ship/templates/garage
     schedule:
       interval: weekly
+    groups:
+      garage-image:
+        patterns:
+          - '*'

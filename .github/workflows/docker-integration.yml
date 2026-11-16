@@ -11,6 +11,9 @@ on:
       - 'scripts/**'
       - 'pyproject.toml'
       - '.github/workflows/docker-integration.yml'
+  schedule:
+    # Weekly, so a changed upstream image or base image is caught between commits.
+    - cron: '17 4 * * 1'
   workflow_dispatch:
 
 concurrency:
@@ -21,64 +24,103 @@ permissions:
   contents: read
 
 jobs:
-  frameworks:
-    name: Development adapters and services
+  development:
+    name: 'Development: plain ASGI, Django, FastAPI'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.13'
-      - run: python -m pip install -e . uv==0.13.3
-      - name: Verify Docker-backed framework and network paths
+      - name: Install Ship and uv
+        run: python -m pip install -e . uv==0.13.3
+      - name: Real development stacks for each app type
         env:
           SHIP_DOCKER_TEST: '1'
-        run: python scripts/run_ci_test.py tests.test_frameworks.FrameworkDockerTests tests.test_phase3_docker.PhaseThreeDockerTests tests.test_phase5_docker.ConcurrentProjectsTests -v
+        run: python scripts/run_ci_test.py tests.test_docker_development -v
 
-  services:
-    name: Stateful services and frontend
+  services-data:
+    name: 'Services: databases, cache, mail, search, npm, uv'
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.13'
-      - run: python -m pip install -e . uv==0.13.3
-      - name: Verify selected infrastructure services
+      - name: Install Ship and uv
+        run: python -m pip install -e . uv==0.13.3
+      - name: Live service checks
         env:
           SHIP_DOCKER_TEST: '1'
         run: >-
-          python scripts/run_ci_test.py
-          tests.test_service_catalog_docker.ServiceCatalogDockerTests.test_mysql_application_user_and_separate_root
-          tests.test_service_catalog_docker.ServiceCatalogDockerTests.test_postgres_and_redis_data_survive_container_restart
-          tests.test_service_catalog_docker.ServiceCatalogDockerTests.test_mailpit_smtp_and_web_ui
-          tests.test_service_catalog_docker.ServiceCatalogDockerTests.test_node_npm_and_hmr_port
-          -v
+          python scripts/run_ci_test.py tests.test_docker_services -v
+          -k postgres -k mysql -k mailpit -k meilisearch -k node -k dependency
 
-  production:
-    name: Production builds and restart
+  services-browsers-storage:
+    name: 'Services: browsers and S3 storage'
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.13'
-      - run: python -m pip install -e . uv==0.13.3
-      - name: Verify generic, Django, and FastAPI production images
+      - name: Install Ship and uv
+        run: python -m pip install -e . uv==0.13.3
+      - name: Live service checks
         env:
-          SHIP_PRODUCTION_MATRIX_TEST: '1'
-        run: python scripts/run_ci_test.py tests.test_phase6_docker.ProductionDockerTests -v
+          SHIP_DOCKER_TEST: '1'
+        run: >-
+          python scripts/run_ci_test.py tests.test_docker_services -v
+          -k playwright -k selenium -k garage -k seaweedfs -k rustfs -k silo
+
+  production:
+    name: 'Production images: plain ASGI, Django, FastAPI'
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - name: Install Ship and uv
+        run: python -m pip install -e . uv==0.13.3
+      - name: Build and run production images
+        env:
+          SHIP_PRODUCTION_DOCKER_TEST: '1'
+        run: python scripts/run_ci_test.py tests.test_docker_production -v
+
+  releases:
+    name: Releases booted from a source-free directory
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - name: Install Ship and uv
+        run: python -m pip install -e . uv==0.13.3
+      - name: Release, load and boot each app type
+        env:
+          SHIP_RELEASE_DOCKER_TEST: '1'
+        run: python scripts/run_ci_test.py tests.test_docker_release -v
 
   community-extensions:
     name: Installed community adapter and service
@@ -86,23 +128,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.13'
-      - run: python -m pip install -e . uv==0.13.3
-      - name: Build and install extension wheels
+      - name: Install Ship and uv
+        run: python -m pip install -e . uv==0.13.3
+      - name: Build and install the example distributions
         run: |
           uv build --wheel --out-dir dist/examples examples/community-service
           uv build --wheel --out-dir dist/examples examples/community-adapter
           python -m pip install --no-deps dist/examples/*.whl
-      - name: Verify installed entry points and Docker release paths
+      - name: Entry points, Docker stacks and releases
         env:
           SHIP_EXAMPLE_PLUGINS_TEST: '1'
           SHIP_EXAMPLE_DOCKER_TEST: '1'
-        run: python scripts/run_ci_test.py tests.test_phase8.InstalledExamplePlugins tests.test_phase8_docker.InstalledExamplesDockerTests -v
+        run: python scripts/run_ci_test.py tests.test_extensions -v
 
   mutagen:
     name: Mutagen sync and reload
@@ -110,13 +153,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.13'
-      - run: python -m pip install -e . uv==0.13.3
+      - name: Install Ship and uv
+        run: python -m pip install -e . uv==0.13.3
       - name: Install pinned Mutagen CLI
         run: |
           curl --fail --show-error --silent --location --output /tmp/mutagen.tar.gz https://github.com/mutagen-io/mutagen/releases/download/v0.18.1/mutagen_linux_amd64_v0.18.1.tar.gz
@@ -125,7 +169,7 @@ jobs:
           tar -xzf /tmp/mutagen.tar.gz -C /tmp/ship-mutagen-bin mutagen mutagen-agents.tar.gz
           echo /tmp/ship-mutagen-bin >> "$GITHUB_PATH"
           /tmp/ship-mutagen-bin/mutagen version
-      - name: Verify live file sync and reload
+      - name: Live file sync and reload
         env:
           SHIP_MUTAGEN_TEST: '1'
-        run: python scripts/run_ci_test.py tests.test_mutagen_phase5.MutagenTests.test_live_sync_reload_and_cleanup -v
+        run: python scripts/run_ci_test.py tests.test_mutagen.LiveMutagenTests -v

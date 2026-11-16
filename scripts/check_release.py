@@ -1,26 +1,40 @@
-"""Verify that the release tag and the two package version declarations agree."""
+"""Verify that the release tag matches the package version before publishing."""
 
+import ast
 import os
 from pathlib import Path
-import sys
+import re
 import tomllib
-
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def main() -> None:
-    metadata = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
-    sys.path.insert(0, str(ROOT / "src"))
-    from python_ship import __version__
+def package_version() -> str:
+    tree = ast.parse((ROOT / "src" / "python_ship" / "__init__.py").read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "__version__" for t in node.targets):
+            return ast.literal_eval(node.value)
+    raise SystemExit("src/python_ship/__init__.py does not define __version__.")
 
-    version = metadata["version"]
+
+def main() -> None:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    version = package_version()
     tag = os.environ.get("RELEASE_TAG", "")
-    if metadata["name"] != "python-ship" or version != __version__ or tag != f"v{version}":
-        raise SystemExit(
-            f"Release mismatch: project={metadata['name']!r}, metadata={version!r}, "
-            f"module={__version__!r}, tag={tag!r}; expected tag v{version}."
-        )
+    problems = []
+    if project["name"] != "python-ship":
+        problems.append(f"project name is {project['name']!r}, not 'python-ship'")
+    if "version" in project or "version" not in project.get("dynamic", []):
+        problems.append("pyproject.toml must take its version dynamically from python_ship.__version__")
+    if tag != f"v{version}":
+        problems.append(f"tag {tag!r} does not match package version {version!r} (expected v{version})")
+    if not re.fullmatch(r"\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?", version):
+        problems.append(f"{version!r} is not a final or pre-release version; publish no .dev or local versions")
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    if f"## [{version}]" not in changelog:
+        problems.append(f"CHANGELOG.md has no '## [{version}]' section")
+    if problems:
+        raise SystemExit("Release check failed:\n- " + "\n- ".join(problems))
     print(f"Release tag {tag} matches python-ship {version}.")
 
 

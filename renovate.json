@@ -6,11 +6,20 @@
   "customManagers": [
     {
       "customType": "regex",
-      "description": "Review Docker images embedded in built-in service definitions",
+      "description": "Docker images embedded in built-in service definitions",
       "managerFilePatterns": ["/^src/python_ship/(services|storage)[.]py$/"],
       "matchStrings": ["\"image\": \"(?<depName>[A-Za-z0-9./_-]+):(?<currentValue>[A-Za-z0-9._-]+)\""],
       "datasourceTemplate": "docker",
       "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Silo's release tag (the distroless variant shares it)",
+      "managerFilePatterns": ["/^src/python_ship/storage[.]py$/"],
+      "matchStrings": ["release = \"(?<currentValue>RELEASE[A-Za-z0-9.:-]+)\""],
+      "depNameTemplate": "pgsty/silo",
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "regex:^RELEASE\\.(?<major>\\d{4})-(?<minor>\\d{2})-(?<patch>\\d{2})T"
     },
     {
       "customType": "regex",
@@ -20,6 +29,43 @@
       "depNameTemplate": "playwright",
       "datasourceTemplate": "npm",
       "versioningTemplate": "npm"
+    },
+    {
+      "customType": "regex",
+      "description": "Node image of the production assets stage",
+      "managerFilePatterns": ["/^src/python_ship/stubs[.]py$/"],
+      "matchStrings": ["FROM (?<depName>node):(?<currentValue>[A-Za-z0-9._-]+) AS assets"],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "ASGI servers installed into app images",
+      "managerFilePatterns": ["/^src/python_ship/servers[.]py$/", "/^src/python_ship/templates/Dockerfile$/"],
+      "matchStrings": ["(?<depName>uvicorn|hypercorn)==(?<currentValue>[0-9][A-Za-z0-9.]*)"],
+      "datasourceTemplate": "pypi"
+    },
+    {
+      "customType": "regex",
+      "description": "uv, in the image, `ship uv` and CI",
+      "managerFilePatterns": ["/^src/python_ship/uv[.]py$/", "/^[.]github/workflows/.+[.]yml$/"],
+      "matchStrings": ["UV_VERSION = \"(?<currentValue>[0-9.]+)\"", "uv==(?<currentValue>[0-9.]+)"],
+      "depNameTemplate": "uv",
+      "datasourceTemplate": "pypi"
+    },
+    {
+      "customType": "regex",
+      "description": "Pinned lint and type-check tools",
+      "managerFilePatterns": ["/^scripts/check_local[.]py$/"],
+      "matchStrings": ["\"(?<depName>ruff|mypy)==(?<currentValue>[0-9.]+)\""],
+      "datasourceTemplate": "pypi"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "One PR moves uv everywhere at once",
+      "matchDepNames": ["uv"],
+      "groupName": "uv"
     }
   ]
 }

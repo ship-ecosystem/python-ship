@@ -6,3 +6,4 @@ global-exclude __pycache__ *.py[cod] .DS_Store
 prune examples/*/build
 prune examples/*/dist
 prune examples/*/src/*.egg-info
+graft schema

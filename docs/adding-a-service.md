@@ -162,7 +162,11 @@ are the references:
 - `validate(config, project_root)` — problems, as a list of messages.
   `python_ship.adapters.target_problems()` checks a `module:callable` target
   statically, without importing project code on the host.
-- `server_target(config)` — the ASGI target the selected server runs.
+- `interface(config, project_root)` — `"asgi"` or `"wsgi"`. `ship init` only
+  offers servers that can run it, and an incompatible `server` is a
+  configuration error.
+- `server_target(config)` — the `module:callable` target the selected server
+  runs.
 - `console_commands()` — extra `ship <name>` proxies run in the app
   container, such as Django's `{"manage": ["python", "manage.py"]}`. They're
   registered only when your adapter is selected, and can't reuse Ship's own
@@ -176,9 +180,26 @@ An adapter is registered under `python_ship.adapters`;
 [`examples/community-adapter`](../examples/community-adapter) is a complete
 Starlette adapter.
 
-## Adding an ASGI server
+An adapter may also define `app_environment(config)`, returning variables
+the framework needs in every app container: Flask's adapter sets
+`FLASK_APP` this way.
 
-An `ASGIServer` has `key`, `label`, `requirement` (one PEP 508 requirement
-installed into the image) and `development_command(target)` /
-`production_command(target)`, each listening on `0.0.0.0:8000`. Register it
-under `python_ship.servers`; projects select it with `"server"`.
+## Adding a web server
+
+A `WebServer` has `key`, `label`, `requirement` (one PEP 508 requirement
+installed into the image), `interfaces` (`("asgi",)`, `("wsgi",)` or both)
+and `development_command(target, interface)` /
+`production_command(target, interface)`, each listening on `0.0.0.0:8000`.
+Register it under `python_ship.servers`; projects select it with `"server"`,
+and `ship init` lists it for apps whose interface it supports.
+
+## Running the app's image from a service
+
+A service that runs the app's own code — a task queue worker, a scheduler —
+returns `context.app_process(command, **settings)` instead of a Compose
+service of its own. Ship turns it into a container of the app's image, with
+its build, environment, networks, dependencies and (in development) bind
+mount, no published ports and a 60s stop grace period; `settings` are merged
+in. The built-in `CeleryService` uses it for its worker and beat containers.
+A release's deploy script doesn't start these containers before the deploy
+commands, and Mutagen syncs into them.

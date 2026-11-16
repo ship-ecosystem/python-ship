@@ -111,6 +111,11 @@ class ReleaseDockerTests(DockerProjectTestCase):
                               deploy_commands=[["python", "-c", "import fastapi"]],
                               checks=[("/", b"fastapi initial"), ("/dependencies", b'"redis":true')])
 
+    def test_flask_release_on_granian(self):
+        self.release_and_boot(fixture="flask_app", init_arguments=("--cache", "redis", "--server", "granian"),
+                              deploy_commands=["flask routes"],
+                              checks=[("/", b"flask initial"), ("/dependencies", b'"redis":true')])
+
 
 if __name__ == "__main__":
     unittest.main()

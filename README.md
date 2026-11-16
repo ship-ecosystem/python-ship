@@ -11,13 +11,13 @@ A framework-agnostic, cross-platform Docker development environment for
 Python web apps, with portable production releases. It is the Python member
 of the Ship ecosystem, alongside [PHP Ship](https://github.com/php-ship/ship):
 the same commands, the same `ship.json` vocabulary and the same release
-artifact, for any ASGI app — a plain ASGI callable, Django or FastAPI built
-in, anything else through a community adapter.
+artifact, for any ASGI or WSGI app — a plain callable, Django, FastAPI or
+Flask built in, anything else through a community adapter.
 
 **Status: beta, first public release.** `init`/`up`/`down`/`exec`/`shell`/
 `logs`/`db`/`config:test`/`build`/`release`/`npm`/`uv`/`manage` all work
-end-to-end against a real Docker daemon, for a framework-free app, a Django
-app and a FastAPI app alike: development stacks with a real database and
+end-to-end against a real Docker daemon, for a framework-free app, a Django,
+a FastAPI and a Flask app alike, on Uvicorn, Hypercorn, Gunicorn or Granian: development stacks with a real database and
 cache, production images, and releases booted on a machine with nothing but
 Docker. CI runs the unit suite on Linux, macOS and Windows with Python
 3.11–3.15, and the Docker suites on every push to `main`. See
@@ -37,7 +37,8 @@ for what's built and what's next.
   - [Multiple instances of a service](#multiple-instances-of-a-service)
   - [Custom service names and an external network](#custom-service-names-and-an-external-network)
 - [Dependencies and `ship uv`](#dependencies-and-ship-uv)
-- [ASGI servers](#asgi-servers)
+- [Web servers: ASGI and WSGI](#web-servers-asgi-and-wsgi)
+- [Background tasks (Celery)](#background-tasks-celery)
 - [Production releases](#production-releases)
   - [Python security floor](#python-security-floor)
 - [HTTPS / TLS](#https--tls)
@@ -77,9 +78,10 @@ otherwise rebuild by hand:
   the [Starlette example](https://github.com/ship-ecosystem/python-ship/tree/main/examples/community-adapter)
   is one. A plain ASGI callable needs no framework, `requirements.txt` or
   `pyproject.toml` at all.
-- **Postgres and MySQL, Redis, four S3-compatible stores, Meilisearch,
-  Mailpit, Selenium and Playwright, Node, Uvicorn and Hypercorn** — `ship
-  init` picks one option per group; nothing is hardcoded to one choice.
+- **Postgres and MySQL, Redis, RabbitMQ and Celery, four S3-compatible
+  stores, Meilisearch, Mailpit, Selenium and Playwright, Node; Uvicorn,
+  Hypercorn, Gunicorn and Granian** — `ship init` picks one option per group;
+  nothing is hardcoded to one choice.
 
 ## Requirements
 
@@ -148,7 +150,8 @@ Production is a separate pair of commands, not a flag on `ship up` — see
 | `ship doctor` | Shows the installed and published versions and the state and health of every container, with a recovery hint for anything that crashed. |
 | `ship uv <args...>` | Runs uv dependency commands (`add`, `remove`, `lock`, `tree`, ...) in a temporary container with the project's Python. See [Dependencies](#dependencies-and-ship-uv). |
 | `ship npm <args...>` | Runs `npm` in the Node frontend service (e.g. `ship npm install`, `ship npm run dev`). |
-| `ship manage <args...>` | Runs `python manage.py` in the app — only registered for Django projects. A community adapter registers its own commands the same way. |
+| `ship manage <args...>` | Runs `python manage.py` in the app — only registered for Django projects. |
+| `ship flask <args...>` | Runs the `flask` CLI in the app (`FLASK_APP` is set) — only registered for Flask projects. A community adapter registers its own commands the same way. |
 | `ship --version` | Shows the installed python-ship version. |
 
 Every proxied command forwards its arguments exactly as typed (including
@@ -167,9 +170,11 @@ read them — that stays your app's decision.
 
 | Service | Wired automatically | Still needed in the app |
 |---|---|---|
-| PostgreSQL (`postgres`) | `DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USER`/`DB_PASSWORD`, `ship db` | A driver such as `psycopg[binary]`, and settings that read `DB_*` |
+| PostgreSQL (`postgres`, or `pgsql`) | `DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USER`/`DB_PASSWORD`, `ship db` | A driver such as `psycopg[binary]`, and settings that read `DB_*` |
 | MySQL (`mysql`) | The same `DB_*` variables, a separate `DB_ROOT_PASSWORD` the app never receives, `ship db` | A driver such as `mysqlclient` or `PyMySQL` |
 | Redis (`redis`) | `REDIS_URL`; RDB snapshots plus an append-only log | `redis` |
+| RabbitMQ (`rabbitmq`, broker group) | `AMQP_URL`; management UI on `127.0.0.1:${RABBITMQ_MANAGEMENT_PORT:-15672}` in development | A client such as `kombu` or `pika`, or just Celery |
+| Celery (`celery`, tasks group) | A worker and a beat container from the app's image; `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`, `CELERY_APP` | `celery` in your dependencies — see [Background tasks](#background-tasks-celery) |
 | Mailpit (`mailpit`) | `MAIL_HOST`/`MAIL_PORT` (SMTP), web UI on `127.0.0.1:${MAILPIT_WEB_PORT:-8025}`. Development only | Nothing for `smtplib`; point your framework's mail settings at the variables |
 | Meilisearch (`meilisearch`) | `MEILISEARCH_URL`/`MEILISEARCH_KEY` | `meilisearch` (or plain HTTP) |
 | Garage / SeaweedFS / RustFS / Silo | `AWS_ENDPOINT`/`AWS_USE_PATH_STYLE_ENDPOINT`/`AWS_DEFAULT_REGION`/`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_BUCKET` | `boto3` with path-style addressing. Garage creates its bucket; with the others, create `AWS_BUCKET` once. Silo has two image variants — see [Silo on older CPUs](#silo-on-older-cpus) |
@@ -279,17 +284,24 @@ names match PHP Ship's `ship.json`, so a team using both reads one format:
 }
 ```
 
-- `framework` — the adapter: `generic` (any ASGI callable), `django`,
-  `fastapi`, or a community adapter's key.
-- `app` — the ASGI target to serve, `module:callable`. A module under `src/`
-  works too.
+- `$schema` — the shared [ship.json schema](https://github.com/ship-ecosystem/python-ship/blob/main/schema/ship.schema.json),
+  written by `ship init` so editors validate and complete the file. PHP Ship
+  uses the same schema.
+- `framework` — the adapter: `generic` (any ASGI or WSGI callable), `django`,
+  `fastapi`, `flask`, or a community adapter's key.
+- `app` — the ASGI or WSGI target to serve, `module:callable`. A module
+  under `src/` works too.
 - `python` — the Python branch built into the image (`ARG PYTHON_VERSION`).
   Keep it a bare branch (`"3.13"`) so every build gets that branch's latest
   patch release. See [Python security floor](#python-security-floor).
-- `server` — `uvicorn` (default, omitted) or `hypercorn`, or a community
-  server's key. See [ASGI servers](#asgi-servers).
+- `server` — the web server: `uvicorn`, `hypercorn` or `granian` for an ASGI
+  app; `gunicorn` or `granian` for a WSGI app; or a community server's key.
+  Omitted, Ship uses the one recommended for the app. See
+  [Web servers](#web-servers-asgi-and-wsgi).
 - `services` — one selected service per group; a group without an entry
-  means "none".
+  means "none". PostgreSQL is `postgres`; `pgsql`, PHP Ship's original name,
+  is accepted too (and in `additionalServices` and `serviceNames`), so a
+  `ship.json` written by either package reads the same in both.
 - `additionalServices` — extra, named instances (a second database, a second
   Redis, ...). See [Multiple instances of a service](#multiple-instances-of-a-service).
 - `extensions` — entry point names of installed community adapters, services
@@ -425,9 +437,9 @@ The Dockerfile installs your dependencies with uv, in this order:
 | `uv.lock` + `pyproject.toml` | `uv sync --locked --no-dev` |
 | `requirements.txt` | `uv pip install -r requirements.txt` |
 | `pyproject.toml` only | `uv sync --no-dev` |
-| none of them | nothing — only the ASGI server |
+| none of them | nothing — only the web server |
 
-Then it installs the selected ASGI server, so a framework-free app with no
+Then it installs the selected web server, so a framework-free app with no
 manifest still runs. Dependencies live in `/opt/ship-venv`, outside the
 bind-mounted `/app`, so the mount can't hide them.
 
@@ -439,19 +451,71 @@ the image. `ship uv sync`, `run`, `pip`, `python`, `tool` and `venv` are
 refused, since their effects would vanish with the container — use `ship up`
 to install and `ship exec app ...` to run.
 
-## ASGI servers
+## Web servers: ASGI and WSGI
 
-Uvicorn is the default for every framework. Hypercorn is built in too:
-`ship init --server hypercorn`, or `"server": "hypercorn"` in `ship.json`.
-Ship installs the selected server into the image and runs it with reload in
-development. The framework adapter only supplies the ASGI target, so any
-server works with any framework, and a community package can add another
-server (see [Extending ship](#extending-ship)).
+Each framework adapter knows whether the app is ASGI (async) or WSGI (sync),
+and `ship init` only offers servers that can run it, recommended first:
 
-In production, Uvicorn runs with `--proxy-headers` and reads two variables
-from `.env.production`: `WEB_CONCURRENCY` (worker processes, default 1) and
+| App | Interface | Servers (recommended first) |
+|---|---|---|
+| FastAPI, Starlette-style apps | ASGI | Uvicorn, Granian, Hypercorn |
+| Django with `project.asgi:application` | ASGI | Uvicorn, Granian, Hypercorn |
+| Django with `project.wsgi:application` | WSGI | Gunicorn, Granian |
+| Flask | WSGI | Gunicorn, Granian |
+| A plain callable | detected from its signature: `async def app(scope, receive, send)` is ASGI, `def app(environ, start_response)` WSGI | as above |
+
+Pick one with `ship init --server granian` or `"server": "granian"` in
+`ship.json`; without one, Ship uses the recommended server. A server that
+can't run the app (Gunicorn for FastAPI, Uvicorn for Flask) is a
+configuration error naming the ones that can. Ship installs the selected
+server into the image, with reload in development. Granian serves both
+interfaces and runs with `--interface asgi` or `--interface wsgi` to match.
+A community package can add another server (see [Extending ship](#extending-ship)).
+
+In production, every server reads its tuning from `.env.production`:
+Uvicorn and Gunicorn take `WEB_CONCURRENCY` (worker processes) and
 `FORWARDED_ALLOW_IPS` (which proxies to trust for `X-Forwarded-*`; set it to
-your proxy's address).
+your proxy's address); Granian takes `GRANIAN_WORKERS` and its other
+`GRANIAN_*` settings. Uvicorn runs with `--proxy-headers`.
+
+## Background tasks (Celery)
+
+Select Celery with a broker:
+
+```sh
+ship init --cache redis --tasks celery                 # Redis as broker and result backend
+ship init --broker rabbitmq --cache redis --tasks celery  # RabbitMQ broker, Redis results
+```
+
+Ship adds two containers built from the app's own image, with its
+environment, dependencies and (in development) code: `celery` runs a worker,
+`celery-beat` runs the beat scheduler. The app and both containers receive:
+
+| Variable | Value |
+|---|---|
+| `CELERY_BROKER_URL` | RabbitMQ when it is selected, otherwise Redis (database 1) |
+| `CELERY_RESULT_BACKEND` | Redis (database 2) when it is selected, otherwise `rpc://` |
+| `CELERY_APP` | What `celery -A` loads. Defaults to the Django project package (`project`) or the app's module (`main`); set it in `.env` when your Celery app lives elsewhere, such as `CELERY_APP=tasks` |
+
+Your app declares `celery` (with `celery[redis]` for Redis) and builds its
+Celery app from those variables:
+
+```python
+import os
+from celery import Celery
+
+celery = Celery("tasks", broker=os.environ["CELERY_BROKER_URL"], backend=os.environ["CELERY_RESULT_BACKEND"])
+```
+
+Django projects follow Celery's own Django guide; with
+`app.config_from_object("django.conf:settings", namespace="CELERY")`, the
+injected `CELERY_BROKER_URL` and `CELERY_RESULT_BACKEND` are picked up as
+settings. Canvas works as usual (`chain`, `group`, `chord`); chords need a
+real result backend, so select Redis. Set `CELERY_LOG_LEVEL` to change the
+log level. In development the worker restarts on code changes when
+`watchfiles` is installed; otherwise run `ship up` after changing tasks. The
+worker and beat run in production too, and a release's `deploy-commands.sh`
+starts the broker and database but not them.
 
 ## Production releases
 
@@ -748,7 +812,7 @@ edit `ship/Dockerfile` directly — `ship init` keeps your edits unless you pass
 
 ## Extending ship
 
-Third-party packages add services, framework adapters and ASGI servers
+Third-party packages add services, framework adapters and web servers
 without forking Ship. A package registers a Python entry point:
 
 ```toml
@@ -774,7 +838,7 @@ ship-rabbitmq`) and select it by entry point name:
 
 Nothing loads unless `extensions` names it. A missing, duplicate or broken
 extension is a configuration error naming the extension. The contracts —
-`ServiceDefinition`, `FrameworkAdapter`, `ASGIServer`, and the optional
+`ServiceDefinition`, `FrameworkAdapter`, `WebServer`, and the optional
 `ProvidesDatabaseShell`/`ValidatesConfiguration` — are typed protocols in
 [`python_ship.contracts`](https://github.com/ship-ecosystem/python-ship/blob/main/src/python_ship/contracts.py).
 See [`docs/adding-a-service.md`](https://github.com/ship-ecosystem/python-ship/blob/main/docs/adding-a-service.md)

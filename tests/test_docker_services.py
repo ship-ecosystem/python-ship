@@ -157,6 +157,48 @@ class ServiceCatalogDockerTests(DockerProjectTestCase):
     def test_silo_distroless(self):
         self.storage_round_trip("--storage", "silo", "--silo-image", "distroless")
 
+    def celery_project(self):
+        (self.root / "requirements.txt").write_text("celery[redis]==5.7.0\n")
+        (self.root / "tasks.py").write_text(
+            "import os\n"
+            "from celery import Celery\n"
+            "celery = Celery('tasks', broker=os.environ['CELERY_BROKER_URL'], backend=os.environ['CELERY_RESULT_BACKEND'])\n"
+            "celery.conf.beat_schedule = {'tick': {'task': 'tasks.add', 'schedule': 2.0, 'args': (1, 1)}}\n"
+            "@celery.task\n"
+            "def add(x, y):\n"
+            "    return x + y\n"
+            "@celery.task\n"
+            "def total(values):\n"
+            "    return sum(values)\n")
+        with (self.root / ".env").open("a") as stream:
+            stream.write("CELERY_APP=tasks\n")
+
+    def wait_for_beat(self):
+        deadline = time.monotonic() + 60
+        while "Sending due task tick" not in self.compose("logs", "celery-beat").stdout:
+            self.assertLess(time.monotonic(), deadline, self.compose("logs", "celery-beat").stdout[-2000:])
+            time.sleep(2)
+
+    def test_celery_with_redis_runs_a_chord_and_beat(self):
+        self.celery_project()
+        self.up("--cache", "redis", "--tasks", "celery")
+        chord = ("from celery import chord; from tasks import add, total; "
+                 "assert chord(add.s(i, i) for i in range(4))(total.s()).get(timeout=60) == 12")
+        self.assertEqual(0, self.ship("exec", "app", "python", "-c", chord))
+        self.wait_for_beat()
+
+    def test_celery_with_rabbitmq_runs_a_chain(self):
+        self.ports["RABBITMQ_MANAGEMENT_PORT"] = free_port()
+        self.celery_project()
+        with (self.root / ".env").open("a") as stream:
+            stream.write(f"RABBITMQ_MANAGEMENT_PORT={self.ports['RABBITMQ_MANAGEMENT_PORT']}\n")
+        self.up("--broker", "rabbitmq", "--tasks", "celery")
+        chain = "from tasks import add; assert (add.s(1, 2) | add.s(3)).delay().get(timeout=60) == 6"
+        self.assertEqual(0, self.ship("exec", "app", "python", "-c", chain))
+        with urlopen(f"http://127.0.0.1:{self.ports['RABBITMQ_MANAGEMENT_PORT']}/", timeout=10) as response:
+            self.assertEqual(200, response.status)
+        self.wait_for_beat()
+
     def test_dependency_modes_and_ship_uv(self):
         self.up()
         self.assertEqual(0, self.ship("exec", "app", "python", "-c", "import uvicorn"))

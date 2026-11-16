@@ -25,7 +25,7 @@ permissions:
 
 jobs:
   development:
-    name: 'Development: plain ASGI, Django, FastAPI'
+    name: 'Development: plain apps, Django, FastAPI, Flask'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -43,7 +43,7 @@ jobs:
         run: python scripts/run_ci_test.py tests.test_docker_development -v
 
   services-data:
-    name: 'Services: databases, cache, mail, search, npm, uv'
+    name: 'Services: databases, cache, Celery, mail, search, npm, uv'
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -61,7 +61,7 @@ jobs:
           SHIP_DOCKER_TEST: '1'
         run: >-
           python scripts/run_ci_test.py tests.test_docker_services -v
-          -k postgres -k mysql -k mailpit -k meilisearch -k node -k dependency
+          -k postgres -k mysql -k mailpit -k meilisearch -k node -k dependency -k celery
 
   services-browsers-storage:
     name: 'Services: browsers and S3 storage'
@@ -85,7 +85,7 @@ jobs:
           -k playwright -k selenium -k garage -k seaweedfs -k rustfs -k silo
 
   production:
-    name: 'Production images: plain ASGI, Django, FastAPI'
+    name: 'Production images: plain apps, Django, FastAPI, Flask'
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 45

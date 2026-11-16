@@ -86,6 +86,25 @@ class ProductionDockerTests(DockerProjectTestCase):
         self.exec("app", HARDENING + "; import hypercorn")
         self.restart_and_check("/dependencies", b'"database":1')
 
+    def test_flask_on_gunicorn_with_a_celery_worker(self):
+        self.copy_fixture("flask_app")
+        with (self.root / "requirements.txt").open("a") as stream:
+            stream.write("celery[redis]==5.7.0\n")
+        (self.root / "tasks.py").write_text(
+            "import os\nfrom celery import Celery\n"
+            "celery = Celery('tasks', broker=os.environ['CELERY_BROKER_URL'], backend=os.environ['CELERY_RESULT_BACKEND'])\n"
+            "@celery.task\ndef add(x, y):\n    return x + y\n")
+        self.prepare(None, "--cache", "redis", "--tasks", "celery")
+        with (self.root / ".env.production").open("a") as stream:
+            stream.write("CELERY_APP=tasks\n")
+        self.assertEqual(0, self.compose("up", "-d", "--force-recreate", production=True).returncode)
+        wait_http(self.port, "/", b"flask initial")
+        wait_http(self.port, "/dependencies", b'"redis":true')
+        self.exec("app", HARDENING + "; import gunicorn")
+        self.exec("app", "from tasks import add; assert add.delay(2, 3).get(timeout=60) == 5")
+        self.exec("celery", "import os; assert os.getuid() == 10001")
+        self.restart_and_check("/dependencies", b'"database":1')
+
     def test_node_assets_are_built_without_node_in_the_runtime(self):
         (self.root / "package.json").write_text('{"name":"assets","version":"1.0.0","scripts":{"build":"mkdir -p dist && echo built > dist/asset.txt"}}')
         (self.root / "package-lock.json").write_text('{"name":"assets","version":"1.0.0","lockfileVersion":3,"packages":{"":{"name":"assets","version":"1.0.0"}}}')

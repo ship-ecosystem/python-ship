@@ -22,6 +22,7 @@ runs without this host-side package. Select the adapter in `ship.json`:
 It shows each adapter hook:
 
 - `detect()` and `default_app()` let `ship init` pick it and suggest `main:app`.
+- `interface()` says Starlette is ASGI, so `ship init` offers ASGI servers.
 - `validate()` checks the import target and the dependency declaration.
 - `console_commands()` adds `ship routes`, run in the app container.
 - `release_commands()` imports the app at every production boot, before the

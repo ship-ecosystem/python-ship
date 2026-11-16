@@ -12,7 +12,7 @@ runtimes, uv instead of Composer, `processes` workers instead of Reverb.
 ### Extension points
 
 - Three typed protocols in `contracts.py`: `ServiceDefinition`,
-  `FrameworkAdapter` and `ASGIServer`, plus the optional
+  `FrameworkAdapter` and `WebServer`, plus the optional
   `ProvidesDatabaseShell` and `ValidatesConfiguration`. They are the public
   API; `py.typed` ships with the package.
 - Services receive a frozen `ServiceContext`: environment, final Compose
@@ -35,6 +35,16 @@ runtimes, uv instead of Composer, `processes` workers instead of Reverb.
 
 ### Frameworks and servers
 
+- Every adapter reports its app's interface, ASGI or WSGI; servers declare
+  the interfaces they serve, and `ship init` offers only compatible ones,
+  recommended first (Uvicorn for ASGI, Gunicorn for WSGI). An omitted
+  `server` means the recommended one; an incompatible one is an error.
+- Built-in servers: Uvicorn and Hypercorn (ASGI), Gunicorn (WSGI), Granian
+  (both, with `--interface` set to match), all pinned exactly.
+- Flask adapter: detects `Flask(...)`, suggests the target, sets `FLASK_APP`
+  and adds `ship flask`. Django's interface follows its target (`asgi.py` or
+  `wsgi.py`); a plain callable's is read from its signature.
+
 - Built-in adapters: `generic` (any ASGI callable, no framework or manifest
   needed), `django` and `fastapi`. Each detects its project and suggests the
   ASGI target for `ship init`, and validates the target statically with
@@ -47,7 +57,7 @@ runtimes, uv instead of Composer, `processes` workers instead of Reverb.
 
 ### Services
 
-- 12 built-in services: PostgreSQL, MySQL, Redis, Mailpit, Meilisearch,
+- 14 built-in services: PostgreSQL, MySQL, Redis, RabbitMQ, Celery, Mailpit, Meilisearch,
   Garage, SeaweedFS, RustFS, Silo, Selenium, Playwright, Node.
 - Named instances (`additionalServices`) for `database`, `cache`, `storage`,
   `search` and `mail`: Compose service `{key}-{name}`, variable prefix
@@ -71,6 +81,14 @@ runtimes, uv instead of Composer, `processes` workers instead of Reverb.
 - Browser testing: Selenium and Playwright. The app gets a `ship-app.test`
   alias because browsers force single-label hosts to HTTPS.
 - Meilisearch runs with `MEILI_ENV=production` in production.
+- Celery (`tasks` group) runs a worker and a beat container from the app
+  image through `ServiceContext.app_process()`, with RabbitMQ (`broker`
+  group, also new) or Redis as broker and Redis or RPC as result backend. In
+  development the worker restarts on changes when watchfiles is installed.
+- PostgreSQL accepts `pgsql` as well as `postgres`, as PHP Ship does; both
+  packages write `postgres`.
+- `schema/ship.schema.json` is the ship.json JSON Schema shared with PHP
+  Ship, written as `$schema` by `ship init` and checked by `test_schema.py`.
 
 ### Compose generation
 
@@ -186,10 +204,8 @@ runtimes, uv instead of Composer, `processes` workers instead of Reverb.
 ## Next
 
 - Publish 0.1.0 to PyPI (see [`releasing.md`](releasing.md)).
-- A shared `ship.json` JSON Schema for the Ship ecosystem, so editors
-  validate both PHP and Python projects.
-- More community examples (a Flask/WSGI adapter through an ASGI bridge,
-  Granian as a server) once someone needs them.
+- A Flower monitoring container for Celery, and more community examples,
+  once someone needs them.
 - Cross-service coordination beyond what `build_compose()` computes itself
   (browser alias, `APP_URL`). Design a general mechanism when a concrete need
   appears.

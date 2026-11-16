@@ -88,6 +88,39 @@ class FrameworkDevelopmentTests(DockerProjectTestCase):
         self.assert_reloads(self.root / "main.py", "hello from plain ASGI", "hello from hypercorn")
         self.assertEqual(0, self.ship("exec", "app", "python", "-c", "import hypercorn"))
 
+    def test_flask_on_gunicorn_http_database_redis_reload_and_cli(self):
+        self.copy_fixture("flask_app")
+        self.up("--database", "postgres", "--cache", "redis")
+        config = ShipConfig.read(self.root)
+        self.assertEqual(("flask", "app:app", "gunicorn"), (config.framework, config.app, config.server))
+        self.assertEqual({"framework": "flask initial"}, json.loads(wait_http(self.port, "/")))
+        self.assertEqual({"database": 1, "redis": True}, json.loads(wait_http(self.port, "/dependencies")))
+        self.assert_reloads(self.root / "app.py", "flask initial", "flask reloaded")
+        result = ship_process(self.root, "flask", "hello")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("hello from flask", result.stdout)
+
+    def test_flask_on_granian_wsgi(self):
+        self.copy_fixture("flask_app")
+        self.up("--database", "postgres", "--cache", "redis", "--server", "granian")
+        self.assertEqual({"database": 1, "redis": True}, json.loads(wait_http(self.port, "/dependencies")))
+        self.assert_reloads(self.root / "app.py", "flask initial", "flask on granian")
+
+    def test_fastapi_on_granian_asgi(self):
+        self.copy_fixture("fastapi_app")
+        self.up("--database", "postgres", "--cache", "redis", "--server", "granian")
+        self.assertEqual({"database": 1, "redis": True}, json.loads(wait_http(self.port, "/dependencies")))
+        self.assert_reloads(self.root / "main.py", "fastapi initial", "fastapi on granian")
+
+    def test_plain_wsgi_app_gets_gunicorn(self):
+        (self.root / "main.py").write_text(
+            "def app(environ, start_response):\n"
+            "    start_response('200 OK', [('Content-Type', 'text/plain')])\n"
+            "    return [b'hello from plain WSGI']\n")
+        self.up()
+        self.assertEqual("gunicorn", ShipConfig.read(self.root).server)
+        self.assertEqual(b"hello from plain WSGI", wait_http(self.port))
+
     def test_broken_app_fails_up_with_guidance(self):
         (self.root / "main.py").write_text("import missing_module\napp = None\n")
         self.port = free_port()

@@ -42,7 +42,7 @@
       "customType": "regex",
       "description": "ASGI servers installed into app images",
       "managerFilePatterns": ["/^src/python_ship/servers[.]py$/", "/^src/python_ship/templates/Dockerfile$/"],
-      "matchStrings": ["(?<depName>uvicorn|hypercorn)==(?<currentValue>[0-9][A-Za-z0-9.]*)"],
+      "matchStrings": ["(?<depName>uvicorn|hypercorn|gunicorn|granian)(?:\\[[a-z]+\\])?==(?<currentValue>[0-9][A-Za-z0-9.]*)"],
       "datasourceTemplate": "pypi"
     },
     {
@@ -57,7 +57,7 @@
       "customType": "regex",
       "description": "Pinned lint and type-check tools",
       "managerFilePatterns": ["/^scripts/check_local[.]py$/"],
-      "matchStrings": ["\"(?<depName>ruff|mypy)==(?<currentValue>[0-9.]+)\""],
+      "matchStrings": ["\"(?<depName>ruff|mypy|jsonschema)==(?<currentValue>[0-9.]+)\""],
       "datasourceTemplate": "pypi"
     }
   ],

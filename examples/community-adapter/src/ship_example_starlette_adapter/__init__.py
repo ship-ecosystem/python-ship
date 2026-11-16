@@ -5,6 +5,7 @@ import re
 
 from python_ship.adapters import target_problems
 from python_ship.config import ShipConfig
+from python_ship.contracts import Interface
 
 
 class ExampleStarletteAdapter:
@@ -26,6 +27,10 @@ class ExampleStarletteAdapter:
         if not self.detect(project_root):
             problems.append("The Starlette adapter requires starlette in requirements.txt.")
         return problems
+
+    def interface(self, config: ShipConfig, project_root: Path) -> Interface:
+        # Starlette is ASGI, so `ship init` offers Uvicorn, Granian and Hypercorn.
+        return "asgi"
 
     def server_target(self, config: ShipConfig) -> str:
         return config.app

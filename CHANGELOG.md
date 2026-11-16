@@ -19,9 +19,12 @@ The first public release.
   ASGI target, and asks for each service group, named instances, the Silo
   image and the Python version; every answer also has a flag, and
   `--no-interaction` never prompts.
-- Built-in adapters for any ASGI callable, Django and FastAPI; Uvicorn and
-  Hypercorn servers.
-- Twelve built-in services: PostgreSQL, MySQL, Redis, Mailpit, Meilisearch,
+- Built-in adapters for any ASGI or WSGI callable, Django, FastAPI and Flask;
+  Uvicorn, Hypercorn, Gunicorn and Granian servers, with `ship init` offering
+  only the servers that can run the app's interface.
+- Celery (worker and beat from the app image) and RabbitMQ services.
+- A JSON Schema for ship.json, shared with PHP Ship.
+- Fourteen built-in services: PostgreSQL (`postgres`, or `pgsql`), MySQL, Redis, RabbitMQ, Celery, Mailpit, Meilisearch,
   Garage, SeaweedFS, RustFS, Silo, Selenium, Playwright and Node, with named
   instances, custom service names and an external network.
 - Production images (non-root, no uv or pip) and portable releases that run

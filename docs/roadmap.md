@@ -302,12 +302,16 @@ Python 3.11–3.15. It runs pinned lint and type checks, unit and Compose
 tests, then builds and installs both wheel and source distributions in clean
 environments. The Docker integration workflow covers development adapters,
 selected services, production, Mutagen, and separately installed community
-examples; its first run is under review. The portable-release boot workflow
-passes on a fresh Docker-only runner. User guides in `docs/` now cover the
-configuration and operations listed above. The GitHub repository and `pypi`
-environment exist, and a pending PyPI trusted publisher is configured. The
-tag-gated OIDC publishing workflow is prepared in `publish-pypi.yml`; no
-release tag or first upload has been made.
+examples. The development, services, production, and community jobs passed
+on GitHub; the corrected Mutagen job passed locally with the complete pinned
+archive and its next GitHub run is queued. The portable-release boot workflow
+passes on a fresh Docker-only runner. Dependabot is proposing updates for
+Python dependencies, Actions, and Dockerfiles; `renovate.json` is prepared to
+track images embedded in Python service definitions. User guides in `docs/`
+now cover the configuration and operations listed above. The GitHub
+repository and `pypi` environment exist, and a pending PyPI trusted
+publisher is configured. The tag-gated OIDC publishing workflow is prepared
+in `publish-pypi.yml`; no release tag or first upload has been made.
 
 **Completion criterion:** a framework-free Python app, a Django app, and a
 FastAPI app can each go from `ship init` to a verified development stack and a

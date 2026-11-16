@@ -11,6 +11,18 @@ terminate TLS and pass the original host and scheme. Configure trusted hosts,
 proxy headers, HTTPS redirects, and secure cookies in the application itself.
 Ship does not generate certificates or a reverse proxy. Verify the proxy and
 app with a real HTTPS request before directing public traffic to them.
+For example, a host-installed Caddy instance can proxy a published production
+port with this Caddyfile after DNS points at the host:
+
+```caddyfile
+example.com {
+    reverse_proxy 127.0.0.1:8000
+}
+```
+
+Set `publish_ports` to `true`, set `SHIP_PRODUCTION_PORT=8000` in the release
+environment, and allow public access only to the proxy's HTTP and HTTPS
+ports. Use your own domain in place of `example.com`.
 
 ## Backups and restoration
 
@@ -35,8 +47,16 @@ matching credentials, use `pg_restore` from the database service, for example:
 docker compose exec -T postgres sh -c 'exec pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner' < postgres.dump
 ```
 
-For MySQL, use `mysqldump` and `mysql` with the selected application's
-credentials; protect the dump because it contains application data. For Redis,
+For MySQL, make and restore a logical dump with the selected application's
+credentials:
+
+```sh
+docker compose exec -T mysql sh -c 'exec mysqldump -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"' > mysql.sql
+docker compose exec -T mysql sh -c 'exec mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"' < mysql.sql
+```
+
+Restore the second command into a prepared empty database, and protect the
+dump because it contains application data. For Redis,
 Meilisearch, and storage, use their supported export or snapshot procedure,
 or stop the service and snapshot **all** its volumes consistently. Restore
 into new volumes with the same service version before starting the app. Test

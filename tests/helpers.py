@@ -114,7 +114,8 @@ class ProjectTestCase(unittest.TestCase):
     def setUp(self) -> None:
         directory = tempfile.TemporaryDirectory(prefix="ship-test-")
         self.addCleanup(directory.cleanup)
-        self.root = Path(directory.name)
+        # Resolved, as the CLI resolves it: /var is /private/var on macOS, RUNNER~1 a short name on Windows.
+        self.root = Path(directory.name).resolve()
         (self.root / "main.py").write_text(self.app_source, encoding="utf-8")
 
     def ship(self, *arguments: str) -> int:

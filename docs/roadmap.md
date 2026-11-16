@@ -296,8 +296,10 @@ checks, unit tests, and `scripts/check_package.py`. The package check builds a
 wheel and source distribution, installs each in a fresh environment, and
 exercises the installed `ship` CLI against a plain ASGI project. Quick start,
 command reference, and production deployment guides are in `docs/`.
-Cross-platform CI, broader user documentation, GitHub/PyPI setup, and
-publication remain open.
+The GitHub repository exists, and a pending PyPI trusted publisher is
+configured. A tag-gated, OIDC-based workflow is prepared in
+`publish-pypi.yml`. Broader CI and user documentation, the GitHub `pypi`
+environment review gate, and the first public upload remain open.
 
 **Completion criterion:** a framework-free Python app, a Django app, and a
 FastAPI app can each go from `ship init` to a verified development stack and a

@@ -23,12 +23,15 @@ also use:
 python -m pip install -e .
 ```
 
-The distribution name is provisionally `python-ship`, the import name is
-`python_ship`, and the installed command is `ship`. The intended repository is
-`github.com/python-ship/ship`. PyPI project ownership has not yet been claimed.
+The distribution name is `python-ship`, the import name is `python_ship`, and
+the installed command is `ship`. The repository is
+[`ship-ecosystem/python-ship`](https://github.com/ship-ecosystem/python-ship).
+The pending PyPI publisher will create the project on the first successful
+upload; this version is not published yet.
 
 Read the [quick start](docs/quickstart.md), [command reference](docs/commands.md),
 and [production deployment guide](docs/deployment.md) for task-focused steps.
+Maintainers can use the [publishing guide](docs/releasing.md).
 
 The `ship` entry point is one cross-platform Python CLI, like PHP Ship's PHP
 CLI. The uv tool installation above obtains an isolated Python for that CLI;

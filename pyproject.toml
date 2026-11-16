@@ -23,7 +23,7 @@ dependencies = ["typer>=0.27,<0.28"]
 ship = "python_ship.cli:main"
 
 [project.urls]
-Repository = "https://github.com/python-ship/ship"
+Repository = "https://github.com/ship-ecosystem/python-ship"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -22,7 +22,8 @@ class EnvFileTests(ProjectTestCase):
             "SINGLE='literal $HOME # kept'\n"
             "EMPTY=\n"
             "NOEQUALS\n"
-            "1BAD=ignored\n"
+            "1BAD=ignored\n",
+            encoding="utf-8",  # The BOM is not encodable in Windows' legacy default code page.
         )
         values = read_env(self.root / ".env")
         self.assertEqual({

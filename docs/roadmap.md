@@ -300,7 +300,11 @@ Publishing the distributions publicly remains part of Phase 9.
 Phase 9 progress: the 15-job Linux/macOS/Windows quality matrix passed for
 Python 3.11–3.15. It runs pinned lint and type checks, unit and Compose
 tests, then builds and installs both wheel and source distributions in clean
-environments. The Docker integration workflow covers development adapters,
+environments. Pull requests run one Python 3.13 quality job; pushes to `main`
+and manual runs retain the full 15-job matrix. Docker pull requests run the
+development smoke tests when relevant files change; `main` runs the full
+Docker suite. Superseded runs for the same branch are cancelled. The Docker
+integration workflow covers development adapters,
 selected services, production, Mutagen, and separately installed community
 examples. The development, services, production, and community jobs passed
 on GitHub; the corrected Mutagen job passed locally with the complete pinned

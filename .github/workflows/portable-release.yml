@@ -2,8 +2,19 @@ name: Portable release boot
 
 on:
   push:
+    branches: [main]
   pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'scripts/**'
+      - 'pyproject.toml'
+      - '.github/workflows/portable-release.yml'
   workflow_dispatch:
+
+concurrency:
+  group: portable-release-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read

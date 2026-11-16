@@ -2,6 +2,7 @@ name: Docker integration
 
 on:
   push:
+    branches: [main]
   pull_request:
     paths:
       - 'src/**'
@@ -39,6 +40,7 @@ jobs:
 
   services:
     name: Stateful services and frontend
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -62,6 +64,7 @@ jobs:
 
   production:
     name: Production builds and restart
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -79,6 +82,7 @@ jobs:
 
   community-extensions:
     name: Installed community adapter and service
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -102,6 +106,7 @@ jobs:
 
   mutagen:
     name: Mutagen sync and reload
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:

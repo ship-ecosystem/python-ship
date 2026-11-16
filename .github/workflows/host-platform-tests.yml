@@ -2,8 +2,19 @@ name: Host platform tests
 
 on:
   push:
+    branches: [main]
   pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'scripts/**'
+      - 'pyproject.toml'
+      - '.github/workflows/host-platform-tests.yml'
   workflow_dispatch:
+
+concurrency:
+  group: host-platform-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read

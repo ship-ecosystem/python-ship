@@ -239,7 +239,7 @@ deduplication and portable releases.
 - [x] Run deployment commands once per deploy in an app image, after required
   infrastructure starts; stop on the first failure. Include migrations only
   when the project explicitly requests them.
-- [ ] Boot a release on a clean machine or CI environment using Docker alone,
+- [x] Boot a release on a separate clean Docker daemon or CI environment using Docker alone,
   load its images, run its deploy commands, and assert HTTP/database behavior.
 - [x] Test failure and recovery for a crashed app container and a missing
   production credential.
@@ -255,9 +255,13 @@ artifact permissions are restricted on POSIX. A release was copied to a
 source-free directory; its app image tag was removed and loaded from the
 archive, then Docker alone started PostgreSQL, ran the deploy command, served
 an HTTP response backed by the database, restarted, and recovered from a
-forced app crash. Missing credentials failed before Docker. A fresh CI runner
-or separate Docker daemon has not yet repeated this boot check, so that
-verification checkbox remains open alongside the deferred platform CI work.
+forced app crash. Missing credentials failed before Docker. A second boot used
+a separate Docker daemon with zero starting images and containers. It loaded
+the release archives, ran the deploy command, served an HTTP response backed
+by PostgreSQL, verified the database row, and served again after an app
+restart. The temporary daemon was removed afterward. A two-job CI workflow is
+prepared to repeat the build and boot on separate fresh runners; its first
+GitHub run remains pending.
 
 ## 8. Prove the community extension model
 

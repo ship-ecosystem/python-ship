@@ -28,13 +28,16 @@ may change the extension contracts or `ship.json`, and says how here.
 
 - `DB_DATABASE`/`DB_USERNAME` align with PHP; Redis-compatible providers share connection settings.
 - Production uses the explicit stable project name instead of appending `-production`.
-- PostgreSQL follows the PHP 18 image family and its data mount layout.
+- Align shared service images with PHP and JavaScript. PostgreSQL 18.7 retains the
+  PostgreSQL 18 volume layout, and Redis uses 8.10.3.
 - Declared processes run in production only; Celery Beat must be selected explicitly.
 - uv development dependencies remain available in development and are pruned for production.
 - Non-interactive init never invokes a uv installer prompt; doctor does not rewrite Compose.
+- Run lint, type checks and distribution checks once per CI run. Keep unit coverage
+  across supported Python versions and operating systems, and run extended provider
+  and release tests weekly or on demand.
 
 Existing data and projects need the migration review in [docs/parity-report.md](docs/parity-report.md).
-All implementation commits and verification in this pass are local; no push/publication occurred.
 
 ## [0.1.0] - 2026-11-16
 

@@ -77,7 +77,7 @@ class SeaweedFSService:
 
     def compose_fragment(self, context: ServiceContext) -> dict[str, dict[str, Any]]:
         return {context.service_name: {
-            "image": "chrislusf/seaweedfs:4.46",
+            "image": "chrislusf/seaweedfs:4.47",
             "entrypoint": ["/bin/sh", "-c"],
             "command": [_SEAWEED_IDENTITY],
             "environment": {
@@ -104,7 +104,7 @@ class RustFSService:
 
     def compose_fragment(self, context: ServiceContext) -> dict[str, dict[str, Any]]:
         return {context.service_name: {
-            "image": "rustfs/rustfs:1.0.0",
+            "image": "rustfs/rustfs:1.0.6",
             "environment": {
                 "RUSTFS_ACCESS_KEY": context.setting("AWS_ACCESS_KEY_ID", "ship"),
                 "RUSTFS_SECRET_KEY": context.credential("AWS_SECRET_ACCESS_KEY", "shipsecret"),
@@ -123,7 +123,7 @@ class SiloService:
     key = "silo"
     group = "storage"
     label = "Silo"
-    release = "RELEASE.2026-09-16T00-00-00Z"
+    release = "RELEASE.2026-11-12T00-00-00Z"
 
     def compose_fragment(self, context: ServiceContext) -> dict[str, dict[str, Any]]:
         suffix = "-distroless" if context.config.silo_image == "distroless" else ""

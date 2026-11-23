@@ -7,8 +7,16 @@
     {
       "customType": "regex",
       "description": "Docker images embedded in built-in service definitions",
-      "managerFilePatterns": ["/^src/python_ship/(services|storage)[.]py$/"],
-      "matchStrings": ["\"image\": \"(?<depName>[A-Za-z0-9./_-]+):(?<currentValue>[A-Za-z0-9._-]+)\""],
+      "managerFilePatterns": ["/^src/python_ship/(services|storage|portable_data)[.]py$/"],
+      "matchStrings": ["['\"]image['\"]: ['\"](?<depName>[A-Za-z0-9./_-]+):(?<currentValue>[A-Za-z0-9._-]+)['\"]"],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Garage and its configuration stage",
+      "managerFilePatterns": ["/^src/python_ship/templates/garage/Dockerfile$/"],
+      "matchStrings": ["FROM (?<depName>alpine|dxflrs/garage):(?<currentValue>[A-Za-z0-9._-]+)"],
       "datasourceTemplate": "docker",
       "versioningTemplate": "docker"
     },

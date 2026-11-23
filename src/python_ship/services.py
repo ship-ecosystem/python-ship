@@ -32,7 +32,7 @@ class PostgresService:
 
     def compose_fragment(self, context: ServiceContext) -> dict[str, dict[str, Any]]:
         return {context.service_name: {
-            "image": "postgres:18-alpine",
+            "image": "postgres:18.7-alpine",
             "environment": {
                 "POSTGRES_DB": context.setting("DB_DATABASE", "app"),
                 "POSTGRES_USER": context.setting("DB_USERNAME", "app"),
@@ -129,7 +129,7 @@ class MailpitService:
     def compose_fragment(self, context: ServiceContext) -> dict[str, dict[str, Any]]:
         if context.production:
             return {}
-        model: dict[str, Any] = {"image": "axllent/mailpit:v1.31.1"}
+        model: dict[str, Any] = {"image": "axllent/mailpit:v1.34.0"}
         # Only the default instance publishes its web UI, so named instances never collide on a host port.
         if context.instance_name is None:
             model["ports"] = ["127.0.0.1:${MAILPIT_WEB_PORT:-8025}:8025"]
@@ -147,7 +147,7 @@ class MeilisearchService:
 
     def compose_fragment(self, context: ServiceContext) -> dict[str, dict[str, Any]]:
         return {context.service_name: {
-            "image": "getmeili/meilisearch:v1.56.2",
+            "image": "getmeili/meilisearch:v1.57.0",
             "environment": {
                 "MEILI_MASTER_KEY": context.credential("MEILISEARCH_KEY", "shipsearchkey"),
                 "MEILI_NO_ANALYTICS": "true",
@@ -175,7 +175,7 @@ class RabbitMQService:
 
     def compose_fragment(self, context: ServiceContext) -> dict[str, dict[str, Any]]:
         model: dict[str, Any] = {
-            "image": "rabbitmq:4.3.7-management-alpine",
+            "image": "rabbitmq:4.4.1-management-alpine",
             "environment": {
                 "RABBITMQ_DEFAULT_USER": context.setting("RABBITMQ_USER", "app"),
                 "RABBITMQ_DEFAULT_PASS": context.credential("RABBITMQ_PASSWORD", "ship"),
@@ -282,7 +282,7 @@ class SeleniumService:
         if context.production:
             return {}
         return {context.service_name: {
-            "image": "selenium/standalone-chrome:4.52.0-20261101",
+            "image": "selenium/standalone-chrome:4.53.0-20261120",
             "shm_size": "2gb",
             "healthcheck": _healthcheck(
                 ["CMD-SHELL", "/opt/bin/check-grid.sh --host 127.0.0.1 --port 4444"],
@@ -301,7 +301,7 @@ class PlaywrightService:
     key = "playwright"
     group = "testing"
     label = "Playwright (browser server)"
-    version = "1.64.1"
+    version = "1.65.1"
 
     def compose_fragment(self, context: ServiceContext) -> dict[str, dict[str, Any]]:
         if context.production:

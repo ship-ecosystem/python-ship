@@ -185,7 +185,7 @@ read them — that stays your app's decision.
 | Meilisearch (`meilisearch`) | `MEILISEARCH_URL`/`MEILISEARCH_KEY` | `meilisearch` (or plain HTTP) |
 | Garage / SeaweedFS / RustFS / Silo | `AWS_ENDPOINT`/`AWS_USE_PATH_STYLE_ENDPOINT`/`AWS_DEFAULT_REGION`/`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_BUCKET` | `boto3` with path-style addressing. Garage creates its bucket; with the others, create `AWS_BUCKET` once. Silo has two image variants — see [Silo on older CPUs](#silo-on-older-cpus) |
 | Selenium (`selenium`) | A Chrome grid, `SELENIUM_REMOTE_URL`, `APP_URL`. Development only | `selenium` in your test dependencies |
-| Playwright (`playwright`) | A browser server, `PLAYWRIGHT_WS_URL`, `APP_URL`. Development only | `playwright==1.64.1` — the client must match the server version |
+| Playwright (`playwright`) | A browser server, `PLAYWRIGHT_WS_URL`, `APP_URL`. Development only | `playwright==1.65.1` — the client must match the server version |
 | Node.js (`node`) | A Node container for `ship npm`, Vite's port published. Development only | See [Frontend dev server](#frontend-dev-server-vite-hmr) |
 
 Connecting a Django app to the injected variables:
@@ -230,17 +230,18 @@ Built-in images use reviewed tags or digests; release registry references are pi
 
 | Service | Image |
 |---|---|
-| PostgreSQL | `postgres:18-alpine` |
+| PostgreSQL | `postgres:18.7-alpine` |
 | MySQL | `mysql:9.7.4` |
 | Redis | `redis:8.10.3-alpine3.23` |
-| Mailpit | `axllent/mailpit:v1.31.1` |
-| Meilisearch | `getmeili/meilisearch:v1.56.2` |
+| RabbitMQ | `rabbitmq:4.4.1-management-alpine` |
+| Mailpit | `axllent/mailpit:v1.34.0` |
+| Meilisearch | `getmeili/meilisearch:v1.57.0` |
 | Garage | `dxflrs/garage:v2.5.0` (built from `ship/garage/`) |
-| SeaweedFS | `chrislusf/seaweedfs:4.46` |
-| RustFS | `rustfs/rustfs:1.0.0` |
-| Silo | `pgsty/silo:RELEASE.2026-09-16T00-00-00Z` |
-| Selenium | `selenium/standalone-chrome:4.52.0-20261101` |
-| Playwright | `mcr.microsoft.com/playwright:v1.64.1-noble` |
+| SeaweedFS | `chrislusf/seaweedfs:4.47` |
+| RustFS | `rustfs/rustfs:1.0.6` |
+| Silo | `pgsty/silo:RELEASE.2026-11-12T00-00-00Z` |
+| Selenium | `selenium/standalone-chrome:4.53.0-20261120` |
+| Playwright | `mcr.microsoft.com/playwright:v1.65.1-noble` |
 | Node.js | Reviewed digest-pinned Node 22/24/26 image (`node` field) |
 
 ### Silo on older CPUs

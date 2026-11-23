@@ -116,7 +116,7 @@ class ServiceCatalogDockerTests(DockerProjectTestCase):
         vite.assert_hmr(self, self.root, self.ports["VITE_PORT"], self.ports["APP_PORT"], self.ship)
 
     def test_playwright_browser_opens_the_app(self):
-        (self.root / "requirements.txt").write_text("playwright==1.64.1\n")
+        (self.root / "requirements.txt").write_text("playwright==1.65.1\n")
         self.up("--testing", "playwright")
         wait_http(self.ports["APP_PORT"])
         script = ("import os; from playwright.sync_api import sync_playwright; p=sync_playwright().start(); "
@@ -169,7 +169,6 @@ class ServiceCatalogDockerTests(DockerProjectTestCase):
             "import os\n"
             "from celery import Celery\n"
             "celery = Celery('tasks', broker=os.environ['CELERY_BROKER_URL'], backend=os.environ['CELERY_RESULT_BACKEND'])\n"
-            "celery.conf.beat_schedule = {'tick': {'task': 'tasks.add', 'schedule': 2.0, 'args': (1, 1)}}\n"
             "@celery.task\n"
             "def add(x, y):\n"
             "    return x + y\n"
@@ -179,19 +178,12 @@ class ServiceCatalogDockerTests(DockerProjectTestCase):
         with (self.root / ".env").open("a") as stream:
             stream.write("CELERY_APP=tasks\n")
 
-    def wait_for_beat(self):
-        deadline = time.monotonic() + 60
-        while "Sending due task tick" not in self.compose("logs", "celery-beat").stdout:
-            self.assertLess(time.monotonic(), deadline, self.compose("logs", "celery-beat").stdout[-2000:])
-            time.sleep(2)
-
-    def test_celery_with_redis_runs_a_chord_and_beat(self):
+    def test_celery_with_redis_runs_a_chord(self):
         self.celery_project()
         self.up("--cache", "redis", "--tasks", "celery")
         chord = ("from celery import chord; from tasks import add, total; "
                  "assert chord(add.s(i, i) for i in range(4))(total.s()).get(timeout=60) == 12")
         self.assertEqual(0, self.ship("exec", "app", "python", "-c", chord))
-        self.wait_for_beat()
 
     def test_celery_with_rabbitmq_runs_a_chain(self):
         self.ports["RABBITMQ_MANAGEMENT_PORT"] = free_port()
@@ -203,7 +195,6 @@ class ServiceCatalogDockerTests(DockerProjectTestCase):
         self.assertEqual(0, self.ship("exec", "app", "python", "-c", chain))
         with urlopen(f"http://127.0.0.1:{self.ports['RABBITMQ_MANAGEMENT_PORT']}/", timeout=10) as response:
             self.assertEqual(200, response.status)
-        self.wait_for_beat()
 
     def test_dependency_modes_and_ship_uv(self):
         self.up()

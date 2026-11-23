@@ -28,9 +28,13 @@ class FrameworkDevelopmentTests(DockerProjectTestCase):
     def up(self, *init_arguments):
         self.port = free_port()
         (self.root / ".env").write_text(f"APP_PORT={self.port}\n")
+        # Init can create a production settings stub with blank required values. Validate
+        # production here only when the fixture supplied its own settings before init.
+        has_production_settings = (self.root / ".env.production").is_file()
         self.assertEqual(0, self.init(*init_arguments), self.init_output.stderr)
         with captured() as output:
-            self.assertEqual(0, self.ship("config:test") if (self.root / ".env.production").exists() else 0)
+            if has_production_settings:
+                self.assertEqual(0, self.ship("config:test"), output.stderr + output.stdout)
             code = self.ship("up")
         self.assertEqual(0, code, output.stderr + output.stdout[-3000:])
         self.assertIn(f"http://127.0.0.1:{self.port}", output.stdout)

@@ -25,7 +25,12 @@ commit on `main`. The package version has one source,
    RELEASE_TAG=vX.Y.Z python scripts/check_release.py
    ```
 
-3. Merge to `main` and wait for every workflow on that commit to pass.
+3. Merge to `main` and wait for the quality, Docker integration and portable release workflows to pass.
+   The quality workflow runs lint, types and packaging once, exercises every supported Python
+   minor on Linux, and checks unit tests and the real uv installer on macOS and Windows.
+   The Docker workflow runs the application, core services, community extensions and Mutagen
+   checks on `main`. Its browser, storage, provider and full release suites run weekly and on
+   manual dispatch. Run the extended suites before a release that changes those features.
 4. Tag the merged commit and push the tag:
 
    ```sh

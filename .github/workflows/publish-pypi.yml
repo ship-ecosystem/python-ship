@@ -38,7 +38,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          for workflow in quality.yml docker-integration.yml portable-release.yml host-platform-tests.yml; do
+          for workflow in quality.yml docker-integration.yml portable-release.yml; do
             conclusion=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?head_sha=$GITHUB_SHA&event=push&status=completed" \
               --jq '[.workflow_runs[] | .conclusion] | first // "missing"')
             echo "$workflow: $conclusion"

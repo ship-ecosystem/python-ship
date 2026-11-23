@@ -91,9 +91,10 @@ Review these before upgrading an existing project:
    generated entrypoint and frontend/build settings. Existing environment values
    are preserved; fill newly appended production requirements yourself.
 
-Provider tags are reviewed per producer and are not all identical patch pins.
-Common infrastructure behavior and settings converge; an image version change
-still requires a deliberate upgrade and data review.
+Keep the same upstream service version across Python, PHP and JavaScript
+where the integrations and stored data support it. Review provider upgrades
+across all three packages. Check the migration requirements before changing
+a stateful service's version.
 
 ## Local commit trail
 

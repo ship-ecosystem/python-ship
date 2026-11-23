@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 from dataclasses import replace
 import json
+import os
 import unittest
 from unittest.mock import patch
 
@@ -28,7 +29,8 @@ def answers(prompts, confirms=()):
         if label.startswith("Add a custom") or label.startswith("Run suggested"):
             return False
         return confirms.pop(0)
-    with patch("python_ship.cli.interactive_terminal", return_value=True), \
+    with patch.dict(os.environ, {"CI": ""}), \
+            patch("python_ship.cli.interactive_terminal", return_value=True), \
             patch("python_ship.init.typer.prompt", side_effect=ask) as prompt, \
             patch("python_ship.init.typer.confirm", side_effect=confirm):
         yield prompt
@@ -215,7 +217,8 @@ class InteractiveInitTests(ProjectTestCase):
             defaults.append(kwargs.get("default"))
             return kwargs.get("default")
 
-        with patch("python_ship.cli.interactive_terminal", return_value=True), \
+        with patch.dict(os.environ, {"CI": ""}), \
+                patch("python_ship.cli.interactive_terminal", return_value=True), \
                 patch("python_ship.init.typer.prompt", side_effect=accept_default), \
                 patch("python_ship.init.typer.confirm", side_effect=lambda label, **kwargs: label.startswith("Write configuration")):
             code, output = self.run_init()

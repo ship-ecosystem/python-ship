@@ -86,23 +86,26 @@ class ProductionDockerTests(DockerProjectTestCase):
         self.exec("app", HARDENING + "; import hypercorn")
         self.restart_and_check("/dependencies", b'"database":1')
 
-    def test_flask_on_gunicorn_with_a_celery_worker(self):
+    def test_flask_on_gunicorn_with_a_celery_worker_and_beat(self):
         self.copy_fixture("flask_app")
         with (self.root / "requirements.txt").open("a") as stream:
             stream.write("celery[redis]==5.7.0\n")
         (self.root / "tasks.py").write_text(
             "import os\nfrom celery import Celery\n"
             "celery = Celery('tasks', broker=os.environ['CELERY_BROKER_URL'], backend=os.environ['CELERY_RESULT_BACKEND'])\n"
-            "@celery.task\ndef add(x, y):\n    return x + y\n")
-        self.prepare(None, "--cache", "redis", "--tasks", "celery")
-        with (self.root / ".env.production").open("a") as stream:
-            stream.write("CELERY_APP=tasks\n")
-        self.assertEqual(0, self.compose("up", "-d", "--force-recreate", production=True).returncode)
+            "celery.conf.beat_schedule = {'tick': {'task': 'tasks.tick', 'schedule': 2.0}}\n"
+            "@celery.task\ndef add(x, y):\n    return x + y\n"
+            "@celery.task\ndef tick():\n"
+            "    from redis import Redis\n"
+            "    Redis.from_url(os.environ['REDIS_URL']).incr('ship:beat')\n")
+        self.prepare(None, "--cache", "redis", "--tasks", "celery",
+                     processes={"celery-beat": ["sh", "-c", 'exec celery -A "$CELERY_APP" beat --loglevel=info --schedule=/tmp/celerybeat-schedule']})
         wait_http(self.port, "/", b"flask initial")
         wait_http(self.port, "/dependencies", b'"redis":true')
         self.exec("app", HARDENING + "; import gunicorn")
         self.exec("app", "from tasks import add; assert add.delay(2, 3).get(timeout=60) == 5")
         self.exec("celery", "import os; assert os.getuid() == 10001")
+        self.exec("app", "import os; from redis import Redis; assert int(Redis.from_url(os.environ['REDIS_URL']).get('ship:beat') or 0) > 0")
         self.restart_and_check("/dependencies", b'"database":1')
 
     def test_node_assets_are_built_without_node_in_the_runtime(self):

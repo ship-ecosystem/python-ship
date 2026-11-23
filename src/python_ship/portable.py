@@ -82,7 +82,7 @@ class PortableService:
 
     def http_endpoints(self, context: ServiceContext) -> list[dict[str, Any]]:
         if self.key == "centrifugo":
-            return [{"port": 8000, "role": "websocket", "health": "/health", "urlSetting": "CENTRIFUGO_PUBLIC_URL"}]
+            return [{"port": 8000, "role": "websocket", "health": "/health", "urlSetting": "VITE_CENTRIFUGO_URL"}]
         return []
 
 

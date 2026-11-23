@@ -232,3 +232,28 @@ class WebServer(Protocol):
     def production_command(self, target: str, interface: Interface) -> list[str]:
         """Serve ``target`` on 0.0.0.0:8000 for production."""
         ...
+
+
+@runtime_checkable
+class DescribesRelease(Protocol):
+    """Optional framework metadata; setting names only, never secret values."""
+
+    def describe_release(self, config: ShipConfig, project_root: Path) -> dict[str, Any]:
+        """Return health, urlSetting and requiredEnv; null means unknown."""
+        ...
+
+
+@runtime_checkable
+class SuggestsProcesses(Protocol):
+    """Optional process choices for init; suggestions never run automatically."""
+
+    def suggest_processes(self, config: ShipConfig, project_root: Path) -> dict[str, Any]:
+        ...
+
+
+@runtime_checkable
+class ExposesHttp(Protocol):
+    """Optional service endpoints using the same shape as processes.http."""
+
+    def http_endpoints(self, context: ServiceContext) -> list[dict[str, Any]]:
+        ...

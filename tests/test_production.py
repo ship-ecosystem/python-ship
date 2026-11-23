@@ -72,9 +72,9 @@ class BuildCommandTests(ProjectTestCase):
         self.assertIn(str(path), command)
         model = json.loads(path.read_text().split("\n", 1)[1])
         self.assertEqual(model["services"]["app"]["image"], model["services"]["worker"]["image"])
-        self.assertTrue(model["services"]["app"]["image"].endswith("-production-app:local"))
+        self.assertTrue(model["services"]["app"]["image"].endswith("-app:local"))
         self.assertFalse((self.root / "ship" / "docker-compose.generated.yml").exists())
-        self.assertIn("-production-app:local (app, worker)", output.stdout)
+        self.assertIn("-app:local (app, worker)", output.stdout)
 
     def test_override_file_never_reaches_production(self):
         (self.root / "docker-compose.override.yml").write_text("services: {}\n")

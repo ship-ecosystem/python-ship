@@ -446,7 +446,7 @@ def up() -> int:
         except ConfigError:
             run(prefix + ["down"], project)
             raise
-    port = wait_for_stack(prefix, set(model["services"]), config.app_service)
+    port = wait_for_stack(prefix, {name for name, service in model["services"].items() if not service.get("profiles")}, config.app_service)
     typer.echo(f"The stack is running: http://127.0.0.1:{port}")
     return 0
 
@@ -519,12 +519,20 @@ def doctor() -> int:
     warning = stub_version_warning(project)
     if warning:
         warn(warning)
-    prefix = compose_prefix(project, config)
+    require_docker()
+    from .compose import compose_path
+    path = compose_path(project)
+    if not path.is_file():
+        fail("The development Compose file is missing; run ship up first.")
+    prefix = ["docker", "compose", "--project-directory", str(project), "-f", str(path)]
+    override = override_file(project)
+    if override:
+        prefix += ["-f", str(override)]
     result = subprocess.run(prefix + ["ps", "--all", "--format", "json"], cwd=project, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         fail(f"Could not inspect Docker Compose: {result.stderr.strip()}. Check that Docker is running.")
     found = records(result.stdout)
-    fatal, pending, port = status(found, set(model["services"]), config.app_service)
+    fatal, pending, port = status(found, {name for name, service in model["services"].items() if not service.get("profiles")}, config.app_service)
     for name, service in model["services"].items():
         record = found.get(name, {})
         health = record.get("Health")

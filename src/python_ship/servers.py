@@ -15,11 +15,11 @@ class UvicornServer:
     interfaces: tuple[Interface, ...] = ("asgi",)
 
     def development_command(self, target: str, interface: Interface) -> list[str]:
-        return ["python", "-m", "uvicorn", target, "--host", "0.0.0.0", "--port", "8000", "--reload"]
+        return ["python", "-m", "uvicorn", target.removesuffix("()"), *(["--factory"] if target.endswith("()") else []), "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
     def production_command(self, target: str, interface: Interface) -> list[str]:
         # Reads WEB_CONCURRENCY (workers) and FORWARDED_ALLOW_IPS (trusted proxies) from the environment.
-        return ["python", "-m", "uvicorn", target, "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+        return ["python", "-m", "uvicorn", target.removesuffix("()"), *(["--factory"] if target.endswith("()") else []), "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
 
 
 class HypercornServer:
@@ -56,11 +56,11 @@ class GranianServer:
     interfaces: tuple[Interface, ...] = ("asgi", "wsgi")
 
     def development_command(self, target: str, interface: Interface) -> list[str]:
-        return ["python", "-m", "granian", "--interface", interface, "--host", "0.0.0.0", "--port", "8000", "--reload", target]
+        return ["python", "-m", "granian", "--interface", interface, "--host", "0.0.0.0", "--port", "8000", "--reload", *(["--factory"] if target.endswith("()") else []), target.removesuffix("()")]
 
     def production_command(self, target: str, interface: Interface) -> list[str]:
         # Reads GRANIAN_WORKERS and the other GRANIAN_* settings from the environment.
-        return ["python", "-m", "granian", "--interface", interface, "--host", "0.0.0.0", "--port", "8000", target]
+        return ["python", "-m", "granian", "--interface", interface, "--host", "0.0.0.0", "--port", "8000", *(["--factory"] if target.endswith("()") else []), target.removesuffix("()")]
 
 
 BUILTIN_SERVERS = {server.key: server for server in (UvicornServer(), HypercornServer(), GunicornServer(), GranianServer())}

@@ -9,7 +9,7 @@ import re
 from .config import ShipConfig
 from .contracts import Interface
 
-TARGET = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*")
+TARGET = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*:[A-Za-z_][A-Za-z0-9_]*(?:\(\))?")
 # Directories never searched when detecting a project's app module.
 _SKIP = {".git", ".venv", "venv", "node_modules", "__pycache__", "dist", "build", "ship", "tests", ".tox"}
 
@@ -58,7 +58,7 @@ def target_problems(project_root: Path, target: str, label: str, example: str) -
     except SyntaxError as exc:
         return [f"{label} module {module.relative_to(project_root)} has a syntax error at line {exc.lineno}: {exc.msg}."]
     names, wildcard = _bindings(module)
-    callable_name = target.partition(":")[2]
+    callable_name = target.partition(":")[2].removesuffix("()")
     if callable_name not in names and not wildcard:
         return [f"{label} callable {callable_name!r} is not defined in {module.relative_to(project_root)}."]
     return []
@@ -104,7 +104,47 @@ def callable_interface(project_root: Path, target: str) -> Interface | None:
     return None
 
 
-class GenericAdapter:
+class PythonCapabilities:
+    """Optional metadata and process suggestions, requiring actual project evidence."""
+
+    def describe_release(self, config: ShipConfig, root: Path) -> dict:
+        required = []
+        if config.framework in ("django", "flask"):
+            for path in python_files(root):
+                try:
+                    tree = ast.parse(path.read_text(encoding="utf-8"))
+                except (OSError, SyntaxError):
+                    continue
+                for node in ast.walk(tree):
+                    if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+                        continue
+                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                    if not any(isinstance(target, ast.Name) and target.id == "SECRET_KEY" for target in targets):
+                        continue
+                    for child in ast.walk(node.value) if node.value is not None else []:
+                        # Only explicit environment reads determine a setting name.
+                        if isinstance(child, ast.Subscript) and isinstance(child.value, ast.Attribute) and child.value.attr == "environ":
+                            if isinstance(child.slice, ast.Constant) and isinstance(child.slice.value, str):
+                                required.append(child.slice.value)
+                        elif isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute) and child.args:
+                            if child.func.attr in ("getenv", "get") and isinstance(child.args[0], ast.Constant) and isinstance(child.args[0].value, str):
+                                owner = child.func.value
+                                if child.func.attr == "getenv" or (isinstance(owner, ast.Attribute) and owner.attr == "environ"):
+                                    required.append(child.args[0].value)
+        return {"health": None, "urlSetting": None, "requiredEnv": sorted(set(required))}
+
+    def suggest_processes(self, config: ShipConfig, root: Path) -> dict:
+        manifests = [root / "pyproject.toml", root / "requirements.txt"]
+        if not any(path.is_file() and re.search(r"\bcelery\b", path.read_text(encoding="utf-8"), re.I) for path in manifests):
+            return {}
+        # The app supplies its Celery instance; the environment remains authoritative.
+        suggestions = {"celery-beat": "celery -A \"$CELERY_APP\" beat --loglevel=info --schedule=/tmp/celerybeat-schedule"}
+        if config.services.get("tasks") != "celery":
+            suggestions["celery-worker"] = "celery -A \"$CELERY_APP\" worker --loglevel=info"
+        return suggestions
+
+
+class GenericAdapter(PythonCapabilities):
     """Serve any ASGI or WSGI callable; no web framework required."""
 
     key = "generic"
@@ -140,7 +180,7 @@ class GenericAdapter:
         return []
 
 
-class DjangoAdapter:
+class DjangoAdapter(PythonCapabilities):
     key = "django"
     label = "Django"
 
@@ -204,7 +244,7 @@ def _framework_apps(project_root: Path, module: str, constructor: str) -> list[t
     return found
 
 
-class FastAPIAdapter:
+class FastAPIAdapter(PythonCapabilities):
     key = "fastapi"
     label = "FastAPI"
 
@@ -231,17 +271,26 @@ class FastAPIAdapter:
         return []
 
 
-class FlaskAdapter:
+class FlaskAdapter(PythonCapabilities):
     """Flask is WSGI, so it runs on Gunicorn (the suggestion) or Granian."""
 
     key = "flask"
     label = "Flask"
 
     def detect(self, project_root: Path) -> bool:
-        return bool(_framework_apps(project_root, "flask", "Flask"))
+        return self.default_app(project_root) is not None
 
     def default_app(self, project_root: Path) -> str | None:
         found = _framework_apps(project_root, "flask", "Flask")
+        # Factories are common Flask layouts; detect their definition without importing the app.
+        for path in python_files(project_root):
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except (OSError, SyntaxError):
+                continue
+            if any(isinstance(node, ast.FunctionDef) and node.name == "create_app" for node in tree.body):
+                if "flask" in path.read_text(encoding="utf-8") and "Flask(" in path.read_text(encoding="utf-8"):
+                    return f"{_module_name(project_root, path)}:create_app()"
         return f"{_module_name(project_root, found[0][0])}:{found[0][1]}" if found else None
 
     def interface(self, config: ShipConfig, project_root: Path) -> Interface:

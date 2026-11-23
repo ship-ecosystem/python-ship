@@ -180,19 +180,19 @@ class CatalogTests(ProjectTestCase):
             with self.subTest(production=production):
                 model = self.model(config, production=production)
                 services = model["services"]
-                for name in ("celery", "celery-beat"):
+                for name in ("celery",):
                     self.assertEqual(services["app"]["image"], services[name]["image"])
                     self.assertNotIn("build", services[name])
                     self.assertNotIn("ports", services[name])
                     self.assertEqual("60s", services[name]["stop_grace_period"])
                     self.assertIn("redis", services[name]["depends_on"])
                     self.assertEqual("redis://redis:6379/1", services[name]["environment"]["CELERY_BROKER_URL"])
-                self.assertEqual(["app", *(["other"] if production else []), "celery", "celery-beat"], model["x-ship"]["app_services"])
+                self.assertEqual(["app", *(["other"] if production else []), "celery"], model["x-ship"]["app_services"])
                 self.assertNotIn("celery", services["app"].get("depends_on", {}))
                 worker = services["celery"]["command"][2]
                 self.assertIn("-A $${CELERY_APP} worker", worker)
                 self.assertEqual(not production, "watchfiles" in worker)
-                self.assertIn("beat --loglevel=$${CELERY_LOG_LEVEL:-info} --schedule /tmp/", services["celery-beat"]["command"][2])
+                self.assertNotIn("celery-beat", services)
                 self.assertEqual([".:/app"] if not production else None, services["celery"].get("volumes"))
         with self.assertRaisesRegex(ConfigError, "needs a broker"):
             self.model(ShipConfig(app="main:app", services={"tasks": "celery"}))

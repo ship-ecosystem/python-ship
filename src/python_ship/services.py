@@ -202,11 +202,12 @@ class CeleryService:
 
     key = "celery"
     group = "tasks"
-    label = "Celery (worker and beat)"
+    label = "Celery worker"
 
     def _redis(self, context: ServiceContext) -> str | None:
-        if context.config.services.get("cache") == "redis":
-            return context.config.service_names.get("redis", "redis")
+        cache = context.config.services.get("cache")
+        if cache in ("redis", "valkey"):
+            return context.config.service_names.get(cache, cache)
         return None
 
     def _rabbitmq(self, context: ServiceContext) -> str | None:
@@ -220,6 +221,13 @@ class CeleryService:
         return []
 
     def _celery_app(self, context: ServiceContext) -> str:
+        # An explicitly configured Celery target takes precedence; do not import application code.
+        settings = read_env(context.project_root / (".env.production" if context.production else ".env"))
+        if settings.get("CELERY_APP"):
+            return settings["CELERY_APP"]
+        for path in ("tasks.py", "celery_app.py"):
+            if (context.project_root / path).is_file() and "Celery(" in (context.project_root / path).read_text(encoding="utf-8"):
+                return path.removesuffix(".py")
         module = context.config.app.partition(":")[0]
         if context.config.framework == "django":
             # project.asgi -> project, where Django projects define their Celery app.
@@ -235,11 +243,9 @@ class CeleryService:
             # entry point, because watchfiles doesn't expand variables in a command string.
             worker = (f"if python -c 'import watchfiles' 2>/dev/null; then exec watchfiles --filter python "
                       f"--args \"{arguments}\" celery.__main__.main /app; else {worker}; fi")
-        beat = "exec celery -A $${CELERY_APP} beat --loglevel=$${CELERY_LOG_LEVEL:-info} --schedule /tmp/celerybeat-schedule"
-        return {
-            context.service_name: context.app_process(["sh", "-c", worker]),
-            f"{context.service_name}-beat": context.app_process(["sh", "-c", beat]),
-        }
+        return {context.service_name: context.app_process(["sh", "-c", worker], healthcheck={
+            "test": ["CMD-SHELL", 'celery -A "$$CELERY_APP" inspect ping -d "celery@$$HOSTNAME" --timeout=3'],
+            "interval": "15s", "timeout": "5s", "retries": 5, "start_period": "30s"})}
 
     def app_environment(self, context: ServiceContext) -> dict[str, str]:
         redis = self._redis(context)

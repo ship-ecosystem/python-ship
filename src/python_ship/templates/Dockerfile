@@ -12,6 +12,7 @@ RUN SHIP_BASE_IMAGE="python:${PYTHON_VERSION}-slim" SHIP_PYTHON_FLOOR="${SHIP_PY
     python /usr/local/share/ship/check-python-security-floor.py
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app/src \
     VIRTUAL_ENV=/opt/ship-venv \
     PATH="/opt/ship-venv/bin:$PATH"
 COPY ship/app-entrypoint.py /usr/local/bin/ship-app-entrypoint.py
@@ -31,18 +32,23 @@ COPY . /app
 RUN uv venv /opt/ship-venv
 # A locked uv project keeps its lockfile authoritative; other projects use uv's pip interface.
 RUN if [ -f uv.lock ] && [ -f pyproject.toml ]; then \
-      uv sync --locked --no-dev; \
+      uv sync --locked; \
     elif [ -f requirements.txt ]; then \
       uv pip install -r requirements.txt; \
     elif [ -f pyproject.toml ]; then \
-      uv sync --no-dev; \
+      uv sync; \
     fi
 # Ship supplies the selected ASGI server even when the app declares no dependencies.
 RUN uv pip install "$SHIP_SERVER_REQUIREMENT"
 
+# Prune development groups for the production runtime after the full development install.
+FROM builder AS production-dependencies
+RUN if [ -f uv.lock ] && [ -f pyproject.toml ]; then uv sync --locked --no-dev; \
+    elif [ -f pyproject.toml ]; then uv sync --no-dev; fi
+
 # Production: the installed app and server only. No uv, no pip, no source bind mount, not root.
 FROM base AS production
-COPY --from=builder /opt/ship-venv /opt/ship-venv
+COPY --from=production-dependencies /opt/ship-venv /opt/ship-venv
 COPY --from=builder --chown=10001:10001 /app /app
 # The app may write under /app at boot (collectstatic, caches); the venv stays read-only.
 RUN chown 10001:10001 /app \

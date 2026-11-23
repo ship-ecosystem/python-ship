@@ -254,6 +254,10 @@ class DoctorTests(ProjectTestCase):
         super().setUp()
         self.assertEqual(0, self.init("--app", "main:app", "--database", "postgres"))
 
+        from python_ship.compose import write_compose
+        from python_ship.config import ShipConfig
+        write_compose(ShipConfig.read(self.root), self.root)
+
     def test_reports_crashed_and_healthy_stacks(self):
         crashed = "\n".join(json.dumps(record) for record in (
             {"Service": "app", "State": "exited", "ExitCode": 3, "Publishers": []},

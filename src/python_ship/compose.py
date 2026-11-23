@@ -355,6 +355,12 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
         _merge(app, {"networks": ["default", *keys]}, f"services.{app_name}")
         compose["networks"] = {"default": {}, **keys}
 
+    if config.external_networks:
+        for selection in selections:
+            hook = getattr(selection.service, "http_endpoints", None)
+            if hook and selection.service_name in services and hook(selection.context(config, project_root, environment)):
+                services[selection.service_name]["networks"] = ["default", *keys]
+
     if environment.is_development and any(selection.group == "testing" for selection in selections):
         networks = app.get("networks", ["default"])
         if isinstance(networks, list):

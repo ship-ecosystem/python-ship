@@ -450,7 +450,7 @@ def _run_init(root: Path, options: InitOptions) -> int:
     typer.echo("Planned ship.json:\n" + json.dumps(config.to_json(), indent=2))
     if options.interactive and not wizard.confirm("Write configuration, templates and missing environment settings?", default=True):
         raise ConfigError("Initialization cancelled; no project files were written.")
-    require_uv()
+    require_uv(interactive=options.interactive)
     published = publish_stubs(root, config, force=options.force)
     config.write(root)
     ensure_dockerignore(root)

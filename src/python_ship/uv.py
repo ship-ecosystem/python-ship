@@ -53,10 +53,12 @@ def _install_uv() -> None:
         raise ConfigError("The uv installer failed; ship init made no project changes.")
 
 
-def require_uv() -> str:
+def require_uv(*, interactive: bool = True) -> str:
     existing = locate_uv()
     if existing:
         return existing
+    if not interactive:
+        raise ConfigError("uv is required; install it before non-interactive initialization. No project files were changed.")
     installer_suffix = "ps1" if os.name == "nt" else "sh"
     installer_url = f"https://astral.sh/uv/{UV_VERSION}/install.{installer_suffix}"
     try:

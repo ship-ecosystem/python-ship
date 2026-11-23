@@ -13,7 +13,7 @@ import sys
 from typing import Any
 
 from . import __version__
-from .config import ConfigError, ShipConfig, command_argv, process_definition
+from .config import ConfigError, ShipConfig, command_argv, http_problem, process_definition
 from .contracts import APP_PROCESS, Interface, ServiceContext, ServiceDefinition, ShipEnvironment, WebServer
 from .mutagen import enabled as mutagen_enabled
 from .plugins import Registry, load_extensions
@@ -309,6 +309,8 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
             raise ConfigError(f"Service {service.key!r} failed to build its Compose fragment: {exc}") from exc
         if not isinstance(fragment, dict) or not isinstance(variables, dict):
             raise ConfigError(f"Service {service.key!r} must return a Compose mapping and an environment mapping.")
+        if any(not isinstance(key, str) or not isinstance(value, str) for key, value in variables.items()):
+            raise ConfigError(f"Service {service.key!r} environment must map setting names to strings.")
         if not fragment:
             continue  # Absent in this environment, as development-only services are in production.
         if selection.service_name not in fragment:
@@ -340,6 +342,8 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
                     source = mount.split(":", 1)[0]
                     if not source.startswith((".", "/", "~", "$")):
                         volumes[source] = None
+                elif isinstance(mount, dict) and mount.get("type", "volume") == "volume" and mount.get("source"):
+                    volumes[mount["source"]] = None
             if target_name == app_name:
                 try:
                     _merge(app, model, f"services.{app_name}")
@@ -366,8 +370,12 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
     if config.external_networks:
         for selection in selections:
             hook = getattr(selection.service, "http_endpoints", None)
-            if hook and selection.service_name in services and hook(selection.context(config, project_root, environment)):
-                services[selection.service_name]["networks"] = ["default", *keys]
+            if hook and selection.service_name in services:
+                endpoints = hook(selection.context(config, project_root, environment))
+                if not isinstance(endpoints, list) or any(http_problem(endpoint) for endpoint in endpoints):
+                    raise ConfigError(f"Service {selection.service.key}: invalid HTTP endpoint metadata.")
+                if endpoints:
+                    services[selection.service_name]["networks"] = ["default", *keys]
 
     if environment.is_development and any(selection.group == "testing" for selection in selections):
         networks = app.get("networks", ["default"])
@@ -392,6 +400,7 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
                 settings["healthcheck"] = {"test": ["CMD", "python", "-c",
                     f"import urllib.request; urllib.request.urlopen({url!r}, timeout=4)"],
                     "interval": "10s", "timeout": "5s", "retries": 5}
+                settings["healthcheck"]["test"] = _escape_dollars(settings["healthcheck"]["test"])
             if definition.get("http"):
                 settings["expose"] = [str(definition["http"]["port"])]
             processes.append((process, settings))

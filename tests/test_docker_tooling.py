@@ -10,8 +10,18 @@ from tests.helpers import DockerProjectTestCase, captured, flag, free_port
 
 @unittest.skipUnless(flag("SHIP_TOOLING_DOCKER_TEST"), "set SHIP_TOOLING_DOCKER_TEST=1 for tooling integration")
 class ToolingDockerTests(DockerProjectTestCase):
+    def setUp(self):
+        super().setUp()
+        # Browser images can create root-owned screenshots on the test bind mount.
+        def restore_ownership():
+            import os
+            if hasattr(os, "getuid"):
+                subprocess.run(["docker", "run", "--rm", "-v", str(self.root) + ":/work", "alpine:3.22",
+                                "chown", "-R", f"{os.getuid()}:{os.getgid()}", "/work"], capture_output=True)
+        self.addCleanup(restore_ownership)
+
     def start(self, *arguments):
-        (self.root / ".env").write_text(f"APP_PORT={free_port()}\n")
+        (self.root / ".env").write_text(f"APP_PORT={free_port()}\nVITE_PORT={free_port()}\n")
         self.assertEqual(0, self.init(*arguments), self.init_output.stderr)
         with captured() as output:
             code = self.ship("up")
@@ -51,6 +61,7 @@ class ToolingDockerTests(DockerProjectTestCase):
         self.assertEqual(0, result.returncode, result.stderr)
 
     def test_cypress_executes_a_real_browser_against_python(self):
+        (self.root / "main.py").write_text(self.app_source.replace("text/plain", "text/html"))
         (self.root / "cypress.config.cjs").write_text("const {defineConfig}=require('cypress'); module.exports=defineConfig({video:false,e2e:{specPattern:'probe.cy.js',supportFile:false}});\n")
         (self.root / "probe.cy.js").write_text("describe('Python Ship',()=>{it('serves the app',()=>{cy.visit('/');cy.contains('hello from plain ASGI');});});\n")
         self.start("--testing", "cypress")

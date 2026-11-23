@@ -289,16 +289,18 @@ class UvRequirementTests(ProjectTestCase):
                     patch("builtins.input", return_value=answer), \
                     patch("python_ship.uv._install_uv", side_effect=failure) as installer, captured() as output:
                 self.assertEqual(1, self.ship("init", "-n"))
-            self.assertEqual(answer == "yes", installer.called)
+            self.assertFalse(installer.called)
             self.assertIn("uv", output.stderr)
             self.assertEqual(["main.py"], sorted(path.name for path in self.root.iterdir()))
 
-    def test_accepting_installs_then_initializes(self):
-        with patch("python_ship.uv.locate_uv", side_effect=[None, "/home/user/.local/bin/uv"]), \
-                patch("builtins.input", return_value="y"), patch("python_ship.uv._install_uv") as installer, captured():
-            self.assertEqual(0, self.ship("init", "-n"))
-        installer.assert_called_once_with()
-        self.assertTrue((self.root / "ship.json").is_file())
+    def test_noninteractive_missing_uv_never_runs_an_installer(self):
+        with patch("python_ship.uv.locate_uv", return_value=None), \
+                patch("builtins.input", side_effect=AssertionError("prompted")), \
+                patch("python_ship.uv._install_uv") as installer, captured() as output:
+            self.assertEqual(1, self.ship("init", "-n"))
+        installer.assert_not_called()
+        self.assertIn("non-interactive", output.stderr)
+        self.assertEqual(["main.py"], sorted(path.name for path in self.root.iterdir()))
 
     def test_uv_is_checked_after_validation(self):
         with patch("python_ship.init.require_uv") as require, captured():

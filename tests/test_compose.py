@@ -162,21 +162,22 @@ class DevelopmentModelTests(ProjectTestCase):
                 self.model(config)
 
     def test_external_network_attaches_the_app_and_processes(self):
-        model = self.model(ShipConfig(app="main:app", external_network="shared_infra", processes={"worker": "python w.py"}))
-        self.assertEqual(["default", "shared_infra"], model["services"]["app"]["networks"])
-        self.assertEqual(["default", "shared_infra"], model["services"]["worker"]["networks"])
-        self.assertEqual({"default": {}, "shared_infra": {"external": True}}, model["networks"])
+        model = self.model(ShipConfig(app="main:app", external_network="shared_infra", processes={"worker": "python w.py"}), production=True)
+        self.assertEqual(["default", "external_0"], model["services"]["app"]["networks"])
+        self.assertEqual(["default", "external_0"], model["services"]["worker"]["networks"])
+        self.assertEqual({"default": {}, "external_0": {"external": True, "name": "shared_infra"}}, model["networks"])
 
     def test_browser_testing_gives_the_app_a_dotted_alias_in_development_only(self):
         config = ShipConfig(app="main:app", services={"testing": "playwright"}, processes={"worker": "sleep 1"})
         development = self.model(config)
         self.assertEqual(["ship-app.test"], development["services"]["app"]["networks"]["default"]["aliases"])
-        self.assertNotIn("aliases", development["services"]["worker"]["networks"]["default"])
+        self.assertNotIn("worker", development["services"])
         self.assertNotIn("networks", self.model(config, production=True)["services"]["app"])
 
     def test_processes_share_the_app_image_and_escape_dollars(self):
         config = ShipConfig(app="main:app", processes={"worker": "python worker.py --queue $QUEUE", "beat": ["python", "beat.py", "$HOME"]})
-        for production in (False, True):
+        self.assertNotIn("worker", self.model(config)["services"])
+        for production in (True,):
             services = self.model(config, production=production)["services"]
             for name in ("worker", "beat"):
                 self.assertEqual(services["app"]["image"], services[name]["image"])
@@ -186,7 +187,7 @@ class DevelopmentModelTests(ProjectTestCase):
             self.assertEqual(["sh", "-c", "python worker.py --queue $$QUEUE"], services["worker"]["command"])
             self.assertEqual(["python", "beat.py", "$$HOME"], services["beat"]["command"])
             self.assertEqual([".:/app"] if not production else None, services["worker"].get("volumes"))
-        self.assertTrue(self.model(config)["services"]["app"]["image"].endswith("-app:development"))
+        self.assertTrue(self.model(config, production=True)["services"]["app"]["image"].endswith("-app:local"))
 
     def test_mutagen_replaces_the_bind_mount_and_host_user(self):
         with patch.dict(os.environ, {"SHIP_MUTAGEN": "1"}):
@@ -198,14 +199,14 @@ class DevelopmentModelTests(ProjectTestCase):
         config = ShipConfig(app="main:app", services={"frontend": "node", "cache": "redis"}, processes={"worker": "python w.py"})
         with patch.dict(os.environ, {"SHIP_MUTAGEN": ""}):
             model = self.model(config)
-        self.assertEqual(["app", "node", "worker"], sorted(model["x-ship"]["sync_services"]))
-        self.assertEqual(["app", "worker"], model["x-ship"]["app_services"])
+        self.assertEqual(["app", "node"], sorted(model["x-ship"]["sync_services"]))
+        self.assertEqual(["app"], model["x-ship"]["app_services"])
         self.assertIn(".:/app", model["services"]["node"]["volumes"])
         with patch.dict(os.environ, {"SHIP_MUTAGEN": "1"}):
             model = self.model(config)
-        self.assertEqual(["app", "node", "worker"], sorted(model["x-ship"]["sync_services"]))
+        self.assertEqual(["app", "node"], sorted(model["x-ship"]["sync_services"]))
         self.assertEqual(["node_modules:/app/node_modules"], model["services"]["node"]["volumes"])
-        self.assertNotIn("volumes", model["services"]["worker"])
+        self.assertNotIn("worker", model["services"])
         self.assertNotIn("sync_services", self.model(config, production=True)["x-ship"])
 
     def test_vite_watcher_polls_only_on_a_windows_bind_mount(self):
@@ -223,7 +224,7 @@ class ProductionModelTests(ProjectTestCase):
                                                       "frontend": "node", "storage": "silo"})
         development = self.model(config)
         production = self.model(config, production=True)
-        self.assertEqual(development["name"] + "-production", production["name"])
+        self.assertEqual(development["name"], production["name"])
         app = production["services"]["app"]
         self.assertEqual("production", app["build"]["target"])
         self.assertTrue(app["build"]["pull"])
@@ -232,7 +233,7 @@ class ProductionModelTests(ProjectTestCase):
             self.assertNotIn(key, app)
         self.assertEqual(["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"],
                          app["command"])
-        self.assertTrue(app["image"].endswith("-production-app:local"))
+        self.assertTrue(app["image"].endswith("-app:local"))
         for name in ("mailpit", "selenium", "node"):
             self.assertIn(name, development["services"])
             self.assertNotIn(name, production["services"])
@@ -269,7 +270,7 @@ class ProductionModelTests(ProjectTestCase):
 
     def test_project_built_services_get_a_local_tag_and_pull(self):
         garage = self.model(ShipConfig(app="main:app", services={"storage": "garage"}), production=True)["services"]["garage"]
-        self.assertTrue(garage["image"].endswith("-production-garage:local"))
+        self.assertTrue(garage["image"].endswith("-garage:local"))
         self.assertTrue(garage["build"]["pull"])
 
 

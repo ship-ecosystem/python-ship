@@ -22,7 +22,7 @@ from .security import DEFAULT_PYTHON, problem_with
 # Alternative spellings accepted in ship.json, normalized on read. PHP Ship and Python Ship
 # both accept "pgsql" and "postgres" for PostgreSQL, and both write "postgres".
 SERVICE_ALIASES = {"pgsql": "postgres"}
-SCHEMA_URL = "https://raw.githubusercontent.com/ship-ecosystem/python-ship/main/schema/ship.schema.json"
+SCHEMA_URL = "https://raw.githubusercontent.com/ship-ecosystem/spec/main/schemas/ship.schema.json"
 
 
 def canonical_service(key: str) -> str:
@@ -53,6 +53,7 @@ FIELDS = (
 )
 
 Command = str | list[str]
+Process = Command | dict[str, Any]
 
 
 def command_argv(command: Command) -> list[str]:
@@ -83,16 +84,21 @@ class ShipConfig:
     services: dict[str, str] = field(default_factory=dict)
     additional_services: list[AdditionalService] = field(default_factory=list)
     service_names: dict[str, str] = field(default_factory=dict)
-    external_network: str | None = None
+    external_network: str | list[str] | None = None
     extensions: list[str] = field(default_factory=list)
     name: str | None = None
     silo_image: str = "standard"
     publish_ports: bool = False
     host_user: bool = True
-    processes: dict[str, Command] = field(default_factory=dict)
+    processes: dict[str, Process] = field(default_factory=dict)
     deploy_commands: list[Command] = field(default_factory=list)
     node_assets: bool = False
     django_collectstatic: bool = False
+
+    @property
+    def external_networks(self) -> list[str]:
+        value = self.external_network
+        return list(dict.fromkeys([value] if isinstance(value, str) else value or []))
 
     @property
     def app_service(self) -> str:
@@ -215,10 +221,11 @@ class ShipConfig:
             problems.append("ship.json \"serviceNames\" renames two services to the same name.")
 
         external_network = data.get("externalNetwork")
-        if external_network is not None and (
-            not isinstance(external_network, str) or not NETWORK_NAME.fullmatch(external_network)
-        ):
-            problems.append("ship.json \"externalNetwork\" must be the name of an existing Docker network.")
+        if external_network is not None:
+            networks = [external_network] if isinstance(external_network, str) else external_network
+            if (not isinstance(networks, list) or not networks or
+                    any(not isinstance(item, str) or not NETWORK_NAME.fullmatch(item) for item in networks)):
+                problems.append('ship.json "externalNetwork" must be a Docker network name or a nonempty list of names.')
 
         extensions = data.get("extensions", [])
         if not isinstance(extensions, list) or any(not isinstance(item, str) or not item for item in extensions):
@@ -257,9 +264,9 @@ class ShipConfig:
                     problems.append(f"ship.json process name {process!r} must be a lowercase Compose service name.")
                 elif process == "app" or process in RESERVED_COMMANDS:
                     problems.append(f"ship.json process name {process!r} is reserved.")
-                if not _valid_command(command):
+                if process_problem(command):
                     problems.append(
-                        f"ship.json process {process!r} must be a shell command string or a nonempty argument list."
+                        f"ship.json process {process!r}: {process_problem(command)}"
                     )
 
         deploy_commands = data.get("deployCommands", [])
@@ -342,8 +349,8 @@ _ATTRIBUTES = {
 
 def _valid_command(command: object) -> bool:
     if isinstance(command, str):
-        return bool(command.strip())
-    return isinstance(command, list) and bool(command) and all(isinstance(part, str) and part for part in command)
+        return bool(command.strip()) and "\0" not in command
+    return isinstance(command, list) and bool(command) and isinstance(command[0], str) and bool(command[0]) and all(isinstance(part, str) and "\0" not in part for part in command)
 
 
 def _load(path: Path) -> tuple[dict[str, Any] | None, list[str]]:
@@ -366,3 +373,35 @@ def _load(path: Path) -> tuple[dict[str, Any] | None, list[str]]:
     if not isinstance(data, dict):
         return None, ["ship.json must contain a JSON object."]
     return data, []
+
+
+def process_problem(value: object) -> str | None:
+    if not isinstance(value, dict):
+        return None if _valid_command(value) else "requires a shell command or argv with a nonempty executable."
+    if set(value) - {"command", "healthcheck", "http"} or not _valid_command(value.get("command")):
+        return "requires command, with optional healthcheck and http fields only."
+    if "healthcheck" in value and (not isinstance(value["healthcheck"], str) or not value["healthcheck"].strip()):
+        return "healthcheck must be a nonempty shell command."
+    if "http" in value:
+        return http_problem(value["http"])
+    return None
+
+
+def http_problem(value: object) -> str | None:
+    if not isinstance(value, dict) or set(value) - {"port", "role", "health", "urlSetting"}:
+        return "http must contain port, role and optional health/urlSetting."
+    port = value.get("port")
+    if type(port) is not int or not 1 <= port <= 65535:
+        return "http.port must be an integer between 1 and 65535."
+    if not isinstance(value.get("role"), str) or not value["role"].strip():
+        return "http.role must be a nonempty string."
+    health, setting = value.get("health"), value.get("urlSetting")
+    if health is not None and (not isinstance(health, str) or not health.startswith("/") or "\0" in health):
+        return "http.health must be a path starting with / or null."
+    if setting is not None and (not isinstance(setting, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", setting)):
+        return "http.urlSetting must be a setting name or null."
+    return None
+
+
+def process_definition(value: Process) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {"command": value}

@@ -13,7 +13,7 @@ import sys
 from typing import Any
 
 from . import __version__
-from .config import ConfigError, ShipConfig, command_argv
+from .config import ConfigError, ShipConfig, command_argv, process_definition
 from .contracts import APP_PROCESS, Interface, ServiceContext, ServiceDefinition, ShipEnvironment, WebServer
 from .mutagen import enabled as mutagen_enabled
 from .plugins import Registry, load_extensions
@@ -147,7 +147,7 @@ def project_name(config: ShipConfig, project_root: Path) -> str:
 
 
 def _command_list(value: Any, what: str) -> list[str]:
-    if not isinstance(value, list) or not value or any(not isinstance(part, str) or not part for part in value):
+    if not isinstance(value, list) or not value or not value[0] or any(not isinstance(part, str) or "\0" in part for part in value):
         raise ConfigError(f"{what} must be a nonempty list of strings.")
     return value
 
@@ -231,8 +231,6 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
     selections = resolve_selections(config, registry)
     server = server_for(config, project_root, registry)
     name = project_name(config, project_root)
-    if production:
-        name += "-production"
     app_name = config.app_service
 
     app: dict[str, Any] = {
@@ -251,6 +249,8 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
         "env_file": [{"path": ".env.production" if production else ".env", "required": False}],
         "environment": {},
         "restart": "unless-stopped",
+        "init": True,
+        "stop_grace_period": PROCESS_STOP_GRACE,
     }
     if production:
         # Never build a release on a stale, locally cached base image.
@@ -349,9 +349,10 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
         except ConfigError as exc:
             raise ConfigError(f"{exc} (set by the {service.key!r} service)") from exc
 
-    if config.external_network:
-        _merge(app, {"networks": ["default", config.external_network]}, f"services.{app_name}")
-        compose["networks"] = {"default": {}, config.external_network: {"external": True}}
+    if config.external_networks:
+        keys = {f"external_{i}": {"external": True, "name": network} for i, network in enumerate(config.external_networks)}
+        _merge(app, {"networks": ["default", *keys]}, f"services.{app_name}")
+        compose["networks"] = {"default": {}, **keys}
 
     if environment.is_development and any(selection.group == "testing" for selection in selections):
         networks = app.get("networks", ["default"])
@@ -362,7 +363,23 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
             aliases.append(BROWSER_APP_HOST)
         app["networks"] = networks
 
-    processes = [(process, {APP_PROCESS: _escape_dollars(command_argv(command))}) for process, command in config.processes.items()]
+    processes = []
+    if production:
+        for process, value in config.processes.items():
+            definition = process_definition(value)
+            settings: dict[str, Any] = {APP_PROCESS: _escape_dollars(command_argv(definition["command"]))}
+            if definition.get("healthcheck"):
+                settings["healthcheck"] = {"test": ["CMD-SHELL", definition["healthcheck"].replace("$", "$$")],
+                                         "interval": "10s", "timeout": "5s", "retries": 5}
+            elif definition.get("http", {}).get("health"):
+                endpoint = definition["http"]
+                url = f"http://127.0.0.1:{endpoint['port']}{endpoint['health']}"
+                settings["healthcheck"] = {"test": ["CMD", "python", "-c",
+                    f"import urllib.request; urllib.request.urlopen({url!r}, timeout=4)"],
+                    "interval": "10s", "timeout": "5s", "retries": 5}
+            if definition.get("http"):
+                settings["expose"] = [str(definition["http"]["port"])]
+            processes.append((process, settings))
     processes += app_processes
     if processes:
         app["image"] = f"{name}-{app_name}:{'local' if production else 'development'}"

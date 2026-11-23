@@ -52,7 +52,7 @@ class SchemaTests(ProjectTestCase):
                "phpExtensions": ["gd"], "deployCommands": ["php artisan migrate --force"],
                "processes": {"horizon": "php artisan horizon"}, "hostUser": True, "extensions": []}
         self.assertEqual([], list(validator.iter_errors(php)))
-        for wrong in ({"unknown": 1}, {"publishPorts": "yes"}, {"additionalServices": [{"group": "testing", "service": "x", "name": "y"}]},
+        for wrong in ({"unknown": 1}, {"publishPorts": "yes"}, {"additionalServices": [{"group": "testing", "service": "x", "name": "BAD NAME"}]},
                       {"siloImage": "tiny"}, {"python": "latest"}):
             with self.subTest(wrong=wrong):
                 self.assertTrue(list(validator.iter_errors(wrong)))

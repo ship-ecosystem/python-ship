@@ -1,0 +1,479 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/ship-ecosystem/spec/main/schemas/ship.schema.json",
+  "title": "ship.json",
+  "description": "Project configuration for the Ship ecosystem (PHP Ship, Python Ship, JavaScript Ship). The source of truth is https://github.com/ship-ecosystem/spec; producers keep a copy that their CI checks against it. Fields marked PHP, Python or JavaScript are read only by that package; the others mean the same in every producer.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "The URL of this schema, for editors."
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*$",
+      "description": "The Compose project name. Defaults to the sanitized project directory name."
+    },
+    "services": {
+      "type": "object",
+      "description": "One selected service key per group (database, cache, storage, search, mail, testing, frontend, ...). A group without an entry means none. PostgreSQL is \"postgres\".",
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      },
+      "examples": [
+        {
+          "database": "postgres",
+          "cache": "redis"
+        }
+      ]
+    },
+    "additionalServices": {
+      "type": "array",
+      "description": "Extra, named instances of a service. The name becomes the Compose service suffix ({service}-{name}) and the environment variable prefix ({NAME}_).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "group",
+          "service",
+          "name"
+        ],
+        "properties": {
+          "group": {
+            "type": "string",
+            "minLength": 1
+          },
+          "service": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          }
+        }
+      }
+    },
+    "serviceNames": {
+      "type": "object",
+      "description": "Renames Compose services: default name (\"app\", or a selected service key) to a new name.",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*$"
+      }
+    },
+    "externalNetwork": {
+      "description": "Docker networks created outside Ship (a reverse proxy's, say), attached to the app and to every service that receives HTTP: one name, or a list of names.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/networkName"
+        },
+        {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/networkName"
+          }
+        }
+      ]
+    },
+    "extensions": {
+      "type": "array",
+      "description": "Explicit trusted community extensions: PHP class names, Python entry point names, or JavaScript relative module paths.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "siloImage": {
+      "enum": [
+        "standard",
+        "distroless"
+      ],
+      "description": "Silo's image variant. The standard image needs an x86-64-v2 CPU."
+    },
+    "publishPorts": {
+      "type": "boolean",
+      "description": "Publish the app's port to the host in production. Development always publishes on 127.0.0.1."
+    },
+    "hostUser": {
+      "type": "boolean",
+      "description": "Run the development app as the host user's UID/GID on Linux. Defaults: false in PHP, true in Python."
+    },
+    "deployCommands": {
+      "type": "array",
+      "description": "Commands run once per deploy, before the app starts (migrations, typically). Python also accepts argument lists.",
+      "items": {
+        "$ref": "#/$defs/command"
+      }
+    },
+    "processes": {
+      "type": "object",
+      "description": "Extra long-running processes from the app's image (workers, schedulers, servers): name to command, or to an object with the command, an optional healthcheck command, and an optional http block saying the process receives HTTP traffic, which puts it in the release's http[] with an HTTP health check. Python also accepts argument lists.",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*$"
+      },
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/command"
+          },
+          {
+            "type": "object",
+            "required": [
+              "command"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "command": {
+                "$ref": "#/$defs/command"
+              },
+              "healthcheck": {
+                "type": "string",
+                "minLength": 1,
+                "description": "A shell command, run in the process's container, that exits 0 while the process works. Without it: an HTTP check when http is set, otherwise that the process stayed up."
+              },
+              "http": {
+                "type": "object",
+                "description": "The process receives HTTP traffic: its release.json http[] entry, with the same fields.",
+                "required": [
+                  "port",
+                  "role"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "port": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 65535,
+                    "description": "Container port the process listens on."
+                  },
+                  "role": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Open list: site, websocket. Unknown: plain HTTP."
+                  },
+                  "health": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "pattern": "^/",
+                    "description": "Path answering 2xx while the process works; null or absent when unknown."
+                  },
+                  "urlSetting": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                    "description": "Name of the setting holding the public address browsers use; null or absent when unknown. A name, never a value."
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "php": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+(?:\\.\\d+)?$",
+      "description": "PHP: the PHP branch (or release) built into the image."
+    },
+    "node": {
+      "type": "string",
+      "description": "Node.js major version for PHP/Python asset tooling or JavaScript application runtime."
+    },
+    "phpExtensions": {
+      "type": "array",
+      "description": "PHP: extra PHP extensions to install.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "framework": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*$",
+      "description": "Python or JavaScript: framework adapter key."
+    },
+    "app": {
+      "type": "string",
+      "pattern": "^[A-Za-z_]\\w*(?:\\.[A-Za-z_]\\w*)*:[A-Za-z_]\\w*(?:\\(\\))?$",
+      "description": "Python: ASGI or WSGI module:callable target; optional () calls a zero-argument application factory."
+    },
+    "python": {
+      "type": "string",
+      "pattern": "^3\\.\\d+(?:\\.\\d+)?$",
+      "description": "Python: the Python branch (or release) built into the image."
+    },
+    "server": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*$",
+      "description": "Python: the web server: uvicorn, hypercorn, granian (ASGI); gunicorn, granian (WSGI); or an extension's key. Defaults to the one recommended for the app."
+    },
+    "nodeAssets": {
+      "type": "boolean",
+      "description": "Python: build npm assets into the production image."
+    },
+    "djangoCollectstatic": {
+      "type": "boolean",
+      "description": "Python: run collectstatic at every production boot (Django only)."
+    },
+    "workspace": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "app": {
+              "$ref": "#/$defs/relativePath"
+            },
+            "buildDependencies": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/relativePath"
+              },
+              "default": []
+            }
+          },
+          "required": [
+            "app"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "JavaScript: Select an app inside a root npm/pnpm/Yarn workspace; buildDependencies lists package paths built first, in order."
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "publicEnv": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/environmentName"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[^\\u0000]*$"
+          },
+          "default": {},
+          "description": "PUBLIC literal strings for builds and development. Never put credentials here."
+        },
+        "secrets": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "allOf": [
+              {
+                "$ref": "#/$defs/environmentName"
+              },
+              {
+                "not": {
+                  "pattern": "^(?:VITE_|NEXT_PUBLIC_|NUXT_PUBLIC_|PUBLIC_|GATSBY_|REACT_APP_)"
+                }
+              }
+            ]
+          },
+          "default": [],
+          "description": "Build-only environment names. Contents come from .ship-secrets/NAME; public framework prefixes are forbidden."
+        },
+        "npmrc": {
+          "type": "boolean",
+          "default": false,
+          "description": "Mount .ship-secrets/npmrc for npm/pnpm dependency operations, never production runtime."
+        }
+      },
+      "description": "JavaScript and Python: explicit public build values and temporary credentials; runtime .env files are excluded from builds."
+    },
+    "deployment": {
+      "type": "string",
+      "enum": [
+        "node",
+        "static"
+      ],
+      "description": "JavaScript: Runtime strategy. Supported modes depend on the framework adapter."
+    },
+    "serverEntry": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/relativePath"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "JavaScript: Framework Node server entry relative to the app root."
+    },
+    "runtimeFiles": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/relativePath"
+      },
+      "default": [],
+      "description": "JavaScript: Extra files required by isolated Node runtime packaging."
+    },
+    "angularProject": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*(?![\\s\\S])"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "JavaScript: angularProject"
+    },
+    "mongodbMode": {
+      "type": "string",
+      "enum": [
+        "standalone",
+        "replica-set"
+      ],
+      "default": "replica-set",
+      "description": "JavaScript: mongodbMode"
+    },
+    "packageManager": {
+      "type": "string",
+      "enum": [
+        "npm",
+        "pnpm",
+        "yarn"
+      ],
+      "default": "npm",
+      "description": "JavaScript: packageManager"
+    },
+    "packageManagerVersion": {
+      "type": "string",
+      "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?![\\s\\S])",
+      "examples": [
+        "12.2.2",
+        "12.21.0",
+        "4.18.1"
+      ],
+      "description": "JavaScript: Exact stable version; must match package.json when declared there."
+    },
+    "scripts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dev": {
+          "$ref": "#/$defs/script"
+        },
+        "build": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/script"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "start": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/script"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "description": "JavaScript: Names of package.json scripts, not shell commands."
+    },
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535,
+      "default": 3000,
+      "description": "JavaScript: port"
+    },
+    "outputDirectory": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/relativePath"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "JavaScript: Framework build output relative to the app root."
+    },
+    "staticRouting": {
+      "type": "string",
+      "enum": [
+        "spa",
+        "html"
+      ],
+      "default": "spa",
+      "description": "JavaScript: staticRouting"
+    },
+    "basePath": {
+      "type": "string",
+      "pattern": "^\\/(?:[A-Za-z0-9_-][A-Za-z0-9_.-]*\\/)*(?![\\s\\S])",
+      "default": "/",
+      "examples": [
+        "/",
+        "/docs/"
+      ],
+      "description": "JavaScript: basePath"
+    }
+  },
+  "$defs": {
+    "networkName": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    },
+    "command": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "array",
+          "minItems": 1,
+          "prefixItems": [
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ],
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "relativePath": {
+      "type": "string",
+      "pattern": "^(?!\\.{1,2}(?:\\/|$))(?!.*\\/\\.{1,2}(?:\\/|$))[A-Za-z0-9_.-]+(?:\\/[A-Za-z0-9_.-]+)*(?![\\s\\S])",
+      "description": "Relative path without traversal, spaces or shell/config syntax."
+    },
+    "script": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9:_-]+(?![\\s\\S])"
+    },
+    "environmentName": {
+      "type": "string",
+      "pattern": "^(?!(?:SHIP_|NODE_|NPM_|PNPM_|LD_|DYLD_))(?!(?:PATH|HOME|ENV|BASH_ENV|SHELL|IFS|CI|COREPACK_HOME|HOST|HOSTNAME|PORT|NG_ALLOWED_HOSTS)$)[A-Z][A-Z0-9_]*(?![\\s\\S])"
+    }
+  }
+}

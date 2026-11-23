@@ -51,6 +51,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 python_ship = [
     "py.typed",
+    "schema/*.json",
     "templates/Dockerfile",
     "templates/app-entrypoint.py",
     "templates/check-python-security-floor.py",

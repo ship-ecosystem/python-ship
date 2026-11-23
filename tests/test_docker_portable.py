@@ -62,7 +62,7 @@ class PortableProviderDockerTests(unittest.TestCase):
                     request = Request("http://" + mapped + endpoint)
                     if key == "elasticsearch":
                         import base64
-                        request.add_header("Authorization", "Basic " + base64.b64encode(b"elastic:ship-elasticsearch-password").decode())
+                        request.add_header("Authorization", "Basic " + base64.b64encode(b"elastic:secret").decode())
                     response = urlopen(request, timeout=10)
                     self.assertEqual(200, response.status)
                     if key != "centrifugo":

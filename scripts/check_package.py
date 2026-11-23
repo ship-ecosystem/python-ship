@@ -33,7 +33,7 @@ def check_artifact(artifact: Path, base: Path) -> None:
         str(python), "-c",
         "from importlib.resources import files; p=files('python_ship'); "
         "assert all(p.joinpath(n).is_file() for n in "
-        "('py.typed', 'templates/Dockerfile', 'templates/check-python-security-floor.py', "
+        "('py.typed', 'schema/ship.schema.json', 'schema/ship-release.schema.json', 'templates/app-entrypoint.py', 'templates/Dockerfile', 'templates/check-python-security-floor.py', "
         "'templates/garage/Dockerfile', 'templates/garage/garage.toml'))",
         cwd=project,
     )

@@ -333,12 +333,15 @@ class NodeService:
         if context.production:
             return {}
         environment = {"VITE_PORT": "${VITE_PORT:-5173}"}
+        if context.config.build.get("npmrc"):
+            environment["NPM_CONFIG_USERCONFIG"] = "/run/secrets/ship_npmrc"
         if sys.platform == "win32" and not mutagen_enabled():
             # Docker Desktop doesn't forward file events from Windows folders into containers,
             # so Vite's watcher (chokidar) polls; under Mutagen the files are local and events work.
             environment["CHOKIDAR_USEPOLLING"] = "true"
         return {context.service_name: {
             "build": {"context": ".", "dockerfile": "ship/node/Dockerfile"},
+            **({"secrets": ["ship_npmrc"]} if context.config.build.get("npmrc") else {}),
             "init": True,
             "working_dir": "/app",
             "volumes": [".:/app", "node_modules:/app/node_modules"],

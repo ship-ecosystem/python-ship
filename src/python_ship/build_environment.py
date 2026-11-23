@@ -7,7 +7,7 @@ from typing import Any
 from .config import ShipConfig
 
 NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-PUBLIC_PREFIXES = ("VITE_", "NEXT_PUBLIC_", "NUXT_PUBLIC_", "PUBLIC_")
+PUBLIC_PREFIXES = ("VITE_", "NEXT_PUBLIC_", "NUXT_PUBLIC_", "PUBLIC_", "GATSBY_", "REACT_APP_")
 
 
 def validate_build(value: Any) -> list[str]:

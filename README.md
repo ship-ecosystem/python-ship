@@ -244,7 +244,7 @@ Built-in images use reviewed tags or digests; release registry references are pi
 | Playwright | `mcr.microsoft.com/playwright:v1.65.1-noble` |
 | Node.js | Reviewed digest-pinned Node 22/24/26 image (`node` field) |
 
-Ship rebuilds PostgreSQL, MySQL, Typesense, SeaweedFS and the development-only Cypress image
+Ship rebuilds PostgreSQL, MySQL, Typesense, Elasticsearch, SeaweedFS and the development-only Cypress image
 with distribution package updates. Portable releases include the rebuilt
 production service images. Run `ship init --force` after reviewing local template
 edits to pick up the updated Python runtime Dockerfile.

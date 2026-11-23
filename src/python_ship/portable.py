@@ -37,6 +37,12 @@ class PortableService:
             return {}
         fragment = self._replace(deepcopy(raw), context)
         model = fragment[context.service_name]
+        if self.key == "elasticsearch":
+            base = model.pop("image")
+            model["build"] = {
+                "context": ".",
+                "dockerfile_inline": f"FROM {base}\nUSER root\nRUN microdnf -y upgrade && microdnf clean all\nUSER 1000:0\n",
+            }
         if self.key in ("typesense", "cypress"):
             base = model.pop("image")
             # Keep the browser versions bundled in Cypress's image. Only update Debian packages.

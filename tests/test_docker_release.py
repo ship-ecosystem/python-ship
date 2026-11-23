@@ -54,6 +54,10 @@ class ReleaseDockerTests(DockerProjectTestCase):
         release = clean / "release"
         shutil.copytree(self.root / "dist" / "ship" / "1.0.0", release)
         manifest = json.loads((release / "release.json").read_text())
+        checker = Path(__file__).resolve().parents[2] / "com.ship.spec/tools/check-release.mjs"
+        if checker.is_file():
+            checked = subprocess.run(["node", str(checker), str(release)], capture_output=True, text=True)
+            self.assertEqual(0, checked.returncode, checked.stderr + checked.stdout)
         compose = ["docker", "compose", "--project-directory", str(release)]
         for entry in manifest["images"]:
             if entry["ref"].startswith("rel-"):

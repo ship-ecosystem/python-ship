@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 import hashlib
 import json
 from pathlib import Path
@@ -15,12 +15,12 @@ import tempfile
 from typing import Any
 
 from . import __version__
+from .capabilities import release_description, required_setting_problems
 from .compose import render, resolve_selections, server_for
 from .config import ConfigError, ShipConfig, command_argv, http_problem, process_definition
 from .contracts import ShipEnvironment
 from .plugins import console_commands, load_extensions
 from .production import credential_problems, read_env, required_variables
-from .capabilities import release_description, required_setting_problems
 
 TAG_PATTERN = r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}"
 
@@ -244,7 +244,7 @@ def assemble_release(root: Path, config: ShipConfig, model: dict[str, Any], tag:
             raise ConfigError("Production settings must declare every required variable.")
         manifest = {
             "format": "ship-release", "app": config.name, "tag": tag,
-            "createdAt": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "createdAt": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
             "builder": {"package": "python-ship", "version": __version__}, "source": source,
             "platform": platform, "compose": "docker-compose.yml", "images": images, "pulledImages": pulled,
             "http": http,

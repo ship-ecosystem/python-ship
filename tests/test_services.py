@@ -10,12 +10,14 @@ from python_ship.services import BUILTIN_SERVICES
 from tests.helpers import ProjectTestCase
 
 GROUPS = {
-    "postgres": "database", "mysql": "database", "redis": "cache", "rabbitmq": "broker", "celery": "tasks",
+    "mariadb": "database", "mongodb": "database", "sqlserver": "database",
+    "valkey": "cache", "memcached": "cache", "elasticsearch": "search", "typesense": "search",
+    "centrifugo": "broadcasting", "cypress": "testing", "postgres": "database", "mysql": "database", "redis": "cache", "rabbitmq": "broker", "celery": "tasks",
     "mailpit": "mail", "meilisearch": "search",
     "selenium": "testing", "playwright": "testing", "node": "frontend",
     "garage": "storage", "seaweedfs": "storage", "rustfs": "storage", "silo": "storage",
 }
-DEVELOPMENT_ONLY = {"mailpit", "selenium", "playwright", "node"}
+DEVELOPMENT_ONLY = {"mailpit", "selenium", "playwright", "cypress", "node"}
 
 
 class CatalogTests(ProjectTestCase):
@@ -31,7 +33,7 @@ class CatalogTests(ProjectTestCase):
             with self.subTest(key=key):
                 self.assertIsInstance(service, ServiceDefinition)
                 self.assertTrue(service.label)
-        self.assertEqual({"postgres", "mysql"}, {key for key, item in BUILTIN_SERVICES.items() if isinstance(item, ProvidesDatabaseShell)})
+        self.assertEqual({"postgres", "mysql", "mariadb", "mongodb", "sqlserver"}, {key for key, item in BUILTIN_SERVICES.items() if isinstance(item, ProvidesDatabaseShell)})
 
     def test_every_image_is_version_pinned(self):
         for key in BUILTIN_SERVICES:
@@ -90,8 +92,8 @@ class CatalogTests(ProjectTestCase):
 
     def test_postgres_and_mysql(self):
         service, context = self.context("postgres")
-        self.assertEqual({"DB_HOST": "postgres", "DB_PORT": "5432", "DB_NAME": "${DB_NAME:-app}",
-                          "DB_USER": "${DB_USER:-app}", "DB_PASSWORD": "${DB_PASSWORD:-ship}"},
+        self.assertEqual({"DB_HOST": "postgres", "DB_PORT": "5432", "DB_DATABASE": "${DB_DATABASE:-app}",
+                          "DB_USERNAME": "${DB_USERNAME:-app}", "DB_PASSWORD": "${DB_PASSWORD:-ship}"},
                          service.app_environment(context))
         self.assertIn("psql", service.database_shell(context)[-1])
         service, context = self.context("mysql")
@@ -106,21 +108,21 @@ class CatalogTests(ProjectTestCase):
         config = ShipConfig(app="main:app", services={"database": "mysql"},
                             additional_services=[AdditionalService("database", "mysql", "legacy")])
         self.assertEqual("mysql", self.model(config)["services"]["app"]["environment"]["DB_HOST"])
-        (self.root / ".env").write_text("DB_USER=root\n")
-        with self.assertRaisesRegex(ConfigError, "DB_USER=root is invalid"):
+        (self.root / ".env").write_text("DB_USERNAME=root\n")
+        with self.assertRaisesRegex(ConfigError, "DB_USERNAME=root is invalid"):
             self.model(config)
-        (self.root / ".env").write_text("DB_USER=app\nLEGACY_DB_USER=ROOT\n")
-        with self.assertRaisesRegex(ConfigError, "LEGACY_DB_USER=root is invalid"):
+        (self.root / ".env").write_text("DB_USERNAME=app\nLEGACY_DB_USERNAME=ROOT\n")
+        with self.assertRaisesRegex(ConfigError, "LEGACY_DB_USERNAME=root is invalid"):
             self.model(config)
-        (self.root / ".env").write_text("DB_USER=app\n")
-        with patch.dict(os.environ, {"DB_USER": "root"}), self.assertRaisesRegex(ConfigError, "DB_USER=root"):
+        (self.root / ".env").write_text("DB_USERNAME=app\n")
+        with patch.dict(os.environ, {"DB_USERNAME": "root"}), self.assertRaisesRegex(ConfigError, "DB_USERNAME=root"):
             self.model(config)
 
     def test_redis_mailpit_meilisearch(self):
         service, context = self.context("redis")
         redis = service.compose_fragment(context)["redis"]
         self.assertEqual(["redis-server", "--save", "60", "1", "--appendonly", "yes"], redis["command"])
-        self.assertEqual({"REDIS_URL": "redis://redis:6379/0"}, service.app_environment(context))
+        self.assertEqual({"REDIS_URL": "redis://redis:6379/0", "REDIS_HOST": "redis", "REDIS_PORT": "6379"}, service.app_environment(context))
         service, context = self.context("mailpit")
         self.assertEqual(["127.0.0.1:${MAILPIT_WEB_PORT:-8025}:8025"], service.compose_fragment(context)["mailpit"]["ports"])
         self.assertEqual({"MAIL_HOST": "mailpit", "MAIL_PORT": "1025"}, service.app_environment(context))
@@ -185,7 +187,7 @@ class CatalogTests(ProjectTestCase):
                     self.assertEqual("60s", services[name]["stop_grace_period"])
                     self.assertIn("redis", services[name]["depends_on"])
                     self.assertEqual("redis://redis:6379/1", services[name]["environment"]["CELERY_BROKER_URL"])
-                self.assertEqual(["app", "other", "celery", "celery-beat"], model["x-ship"]["app_services"])
+                self.assertEqual(["app", *(["other"] if production else []), "celery", "celery-beat"], model["x-ship"]["app_services"])
                 self.assertNotIn("celery", services["app"].get("depends_on", {}))
                 worker = services["celery"]["command"][2]
                 self.assertIn("-A $${CELERY_APP} worker", worker)

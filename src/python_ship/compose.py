@@ -59,7 +59,7 @@ def _selections(config: ShipConfig, registry: Registry) -> list[Selection]:
     for entry in config.additional_services:
         service = registry.services.get(entry.service)
         if service is not None and service.group == entry.group:
-            selections.append(Selection(service, entry.group, entry.name, f"{entry.service}-{entry.name}"))
+            selections.append(Selection(service, entry.group, entry.name, config.service_names.get(f"{entry.service}-{entry.name}", f"{entry.service}-{entry.name}")))
     return selections
 
 
@@ -80,7 +80,7 @@ def selection_problems(config: ShipConfig, registry: Registry) -> list[str]:
                 f"Additional instance {entry.name!r}: {entry.service!r} belongs to the "
                 f"{service.group!r} group, not {entry.group!r}."
             )
-    renamable = {"app", *config.services.values()}
+    renamable = {"app", *config.services.values(), *(f"{entry.service}-{entry.name}" for entry in config.additional_services)}
     for old in config.service_names:
         if old not in renamable:
             problems.append(
@@ -343,7 +343,8 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
             services[target_name] = {"restart": "unless-stopped"}
             _merge(services[target_name], model, f"services.{target_name}")
             condition = "service_healthy" if "healthcheck" in model else "service_started"
-            _merge(app, {"depends_on": {target_name: {"condition": condition}}}, f"services.{app_name}")
+            if not model.get("profiles"):
+                _merge(app, {"depends_on": {target_name: {"condition": condition}}}, f"services.{app_name}")
         try:
             _merge(app["environment"], variables, f"services.{app_name}.environment")
         except ConfigError as exc:

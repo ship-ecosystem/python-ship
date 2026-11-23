@@ -13,8 +13,8 @@ DATABASES = {
         "ENGINE": "django.db.backends.postgresql",
         "HOST": os.environ.get("DB_HOST", "localhost"),
         "PORT": os.environ.get("DB_PORT", "5432"),
-        "NAME": os.environ.get("DB_NAME", "app"),
-        "USER": os.environ.get("DB_USER", "app"),
+        "NAME": os.environ.get("DB_DATABASE", "app"),
+        "USER": os.environ.get("DB_USERNAME", "app"),
         "PASSWORD": os.environ.get("DB_PASSWORD", "ship"),
     }
 }

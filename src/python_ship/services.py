@@ -9,6 +9,7 @@ from typing import Any
 
 from .contracts import ServiceContext, ServiceDefinition
 from .mutagen import enabled as mutagen_enabled
+from .portable import BUILTIN_PORTABLE
 from .production import read_env
 from .storage import BUILTIN_STORAGE
 
@@ -31,13 +32,13 @@ class PostgresService:
 
     def compose_fragment(self, context: ServiceContext) -> dict[str, dict[str, Any]]:
         return {context.service_name: {
-            "image": "postgres:17.12-alpine3.24",
+            "image": "postgres:18-alpine",
             "environment": {
-                "POSTGRES_DB": context.setting("DB_NAME", "app"),
-                "POSTGRES_USER": context.setting("DB_USER", "app"),
+                "POSTGRES_DB": context.setting("DB_DATABASE", "app"),
+                "POSTGRES_USER": context.setting("DB_USERNAME", "app"),
                 "POSTGRES_PASSWORD": context.credential("DB_PASSWORD", "ship"),
             },
-            "volumes": [f"{context.resource_name}_data:/var/lib/postgresql/data"],
+            "volumes": [f"{context.resource_name}_data:/var/lib/postgresql"],
             "healthcheck": _healthcheck(["CMD-SHELL", 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']),
         }}
 
@@ -46,8 +47,8 @@ class PostgresService:
         return {
             f"{prefix}DB_HOST": context.service_name,
             f"{prefix}DB_PORT": "5432",
-            f"{prefix}DB_NAME": context.setting("DB_NAME", "app"),
-            f"{prefix}DB_USER": context.setting("DB_USER", "app"),
+            f"{prefix}DB_DATABASE": context.setting("DB_DATABASE", "app"),
+            f"{prefix}DB_USERNAME": context.setting("DB_USERNAME", "app"),
             f"{prefix}DB_PASSWORD": context.credential("DB_PASSWORD", "ship"),
         }
 
@@ -61,7 +62,7 @@ class MySqlService:
     label = "MySQL"
 
     def validate(self, context: ServiceContext) -> list[str]:
-        variable = context.env_prefix + "DB_USER"
+        variable = context.env_prefix + "DB_USERNAME"
         if (_host_value(context.project_root, variable) or "app").lower() == "root":
             return [
                 f"{variable}=root is invalid: the MySQL image refuses to start with it. Use a separate "
@@ -73,8 +74,8 @@ class MySqlService:
         return {context.service_name: {
             "image": "mysql:9.7.4",
             "environment": {
-                "MYSQL_DATABASE": context.setting("DB_NAME", "app"),
-                "MYSQL_USER": context.setting("DB_USER", "app"),
+                "MYSQL_DATABASE": context.setting("DB_DATABASE", "app"),
+                "MYSQL_USER": context.setting("DB_USERNAME", "app"),
                 "MYSQL_PASSWORD": context.credential("DB_PASSWORD", "ship"),
                 "MYSQL_ROOT_PASSWORD": context.credential("DB_ROOT_PASSWORD", "rootship"),
             },
@@ -92,8 +93,8 @@ class MySqlService:
         return {
             f"{prefix}DB_HOST": context.service_name,
             f"{prefix}DB_PORT": "3306",
-            f"{prefix}DB_NAME": context.setting("DB_NAME", "app"),
-            f"{prefix}DB_USER": context.setting("DB_USER", "app"),
+            f"{prefix}DB_DATABASE": context.setting("DB_DATABASE", "app"),
+            f"{prefix}DB_USERNAME": context.setting("DB_USERNAME", "app"),
             f"{prefix}DB_PASSWORD": context.credential("DB_PASSWORD", "ship"),
         }
 
@@ -116,7 +117,8 @@ class RedisService:
         }}
 
     def app_environment(self, context: ServiceContext) -> dict[str, str]:
-        return {f"{context.env_prefix}REDIS_URL": f"redis://{context.service_name}:6379/0"}
+        return {f"{context.env_prefix}REDIS_URL": f"redis://{context.service_name}:6379/0",
+                f"{context.env_prefix}REDIS_HOST": context.service_name, f"{context.env_prefix}REDIS_PORT": "6379"}
 
 
 class MailpitService:
@@ -343,11 +345,8 @@ class NodeService:
         return {}
 
 
-BUILTIN_SERVICES: dict[str, ServiceDefinition] = {
-    service.key: service
-    for service in (
-        PostgresService(), MySqlService(), RedisService(), RabbitMQService(), CeleryService(), MailpitService(),
-        MeilisearchService(),
-        SeleniumService(), PlaywrightService(), NodeService(), *BUILTIN_STORAGE,
-    )
-}
+_BUILTINS: list[ServiceDefinition] = [
+    PostgresService(), MySqlService(), RedisService(), RabbitMQService(), CeleryService(), MailpitService(),
+    MeilisearchService(), SeleniumService(), PlaywrightService(), NodeService(), *BUILTIN_STORAGE, *BUILTIN_PORTABLE,
+]
+BUILTIN_SERVICES: dict[str, ServiceDefinition] = {service.key: service for service in _BUILTINS}

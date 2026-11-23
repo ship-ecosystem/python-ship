@@ -54,6 +54,7 @@ def publish_stubs(root: Path, config: ShipConfig, *, force: bool) -> bool:
         dockerfile.write_text(render_dockerfile(config), encoding="utf-8", newline="\n")
         (ship / ".ship-version").write_text(__version__ + "\n", encoding="utf-8")
     (ship / FLOOR_SCRIPT).write_text(_template(FLOOR_SCRIPT), encoding="utf-8", newline="\n")
+    (ship / "app-entrypoint.py").write_text(_template("app-entrypoint.py"), encoding="utf-8", newline="\n")
     if uses_garage(config):
         garage = ship / "garage"
         garage.mkdir(exist_ok=True)

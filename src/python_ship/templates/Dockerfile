@@ -14,6 +14,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     VIRTUAL_ENV=/opt/ship-venv \
     PATH="/opt/ship-venv/bin:$PATH"
+COPY ship/app-entrypoint.py /usr/local/bin/ship-app-entrypoint.py
+ENTRYPOINT ["python", "/usr/local/bin/ship-app-entrypoint.py"]
 WORKDIR /app
 
 FROM base AS builder

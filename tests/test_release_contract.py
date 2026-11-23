@@ -55,7 +55,7 @@ class ReleaseContractTests(ProjectTestCase):
             config = self.write_config(name="fixture", app="main:app", services={"storage": "garage", "cache": "redis"})
             (self.root / ".env.production").write_text("AWS_SECRET_ACCESS_KEY=actual-secret\nGARAGE_RPC_SECRET=" + "a" * 64 + "\n")
             model, _ = plan_images(self.model(config, production=True), "v1")
-            def runner(command, **kwargs):
+            def runner(command, defect=defect, **kwargs):
                 result = fake_release_docker(command, **kwargs)
                 if command[:3] == ["docker", "image", "inspect"]:
                     info = json.loads(result.stdout)

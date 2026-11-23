@@ -131,7 +131,7 @@ class DevelopmentModelTests(ProjectTestCase):
         self.assertEqual({"app", "postgres", "redis", "postgres-analytics", "redis-queue"}, set(model["services"]))
         self.assertEqual({"postgres_data", "redis_data", "postgres-analytics_data", "redis-queue_data"}, set(model["volumes"]))
         self.assertEqual("postgres-analytics", app["environment"]["ANALYTICS_DB_HOST"])
-        self.assertEqual("${ANALYTICS_DB_NAME:-app}", app["environment"]["ANALYTICS_DB_NAME"])
+        self.assertEqual("${ANALYTICS_DB_DATABASE:-app}", app["environment"]["ANALYTICS_DB_DATABASE"])
         self.assertEqual("${ANALYTICS_DB_PASSWORD:-ship}", model["services"]["postgres-analytics"]["environment"]["POSTGRES_PASSWORD"])
         self.assertEqual("redis://redis-queue:6379/0", app["environment"]["QUEUE_REDIS_URL"])
         self.assertIn("postgres-analytics", app["depends_on"])

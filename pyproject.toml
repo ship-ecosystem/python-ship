@@ -52,6 +52,7 @@ where = ["src"]
 python_ship = [
     "py.typed",
     "templates/Dockerfile",
+    "templates/app-entrypoint.py",
     "templates/check-python-security-floor.py",
     "templates/garage/Dockerfile",
     "templates/garage/garage.toml",

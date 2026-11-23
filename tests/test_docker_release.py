@@ -20,15 +20,15 @@ PLAIN_DB_APP = (
     "import os, psycopg\n"
     "async def app(scope, receive, send):\n"
     "    if scope['type'] != 'http': return\n"
-    "    with psycopg.connect(host=os.environ['DB_HOST'], dbname=os.environ['DB_NAME'], user=os.environ['DB_USER'],"
+    "    with psycopg.connect(host=os.environ['DB_HOST'], dbname=os.environ['DB_DATABASE'], user=os.environ['DB_USERNAME'],"
     " password=os.environ['DB_PASSWORD']) as db:\n"
     "        value = db.execute('SELECT value FROM ship_release_probe').fetchone()[0].encode()\n"
     "    await send({'type': 'http.response.start', 'status': 200, 'headers': []})\n"
     "    await send({'type': 'http.response.body', 'body': value})\n"
 )
 PLAIN_MIGRATION = (
-    "python -c \"import os,psycopg; db=psycopg.connect(host=os.environ['DB_HOST'],dbname=os.environ['DB_NAME'],"
-    "user=os.environ['DB_USER'],password=os.environ['DB_PASSWORD']); "
+    "python -c \"import os,psycopg; db=psycopg.connect(host=os.environ['DB_HOST'],dbname=os.environ['DB_DATABASE'],"
+    "user=os.environ['DB_USERNAME'],password=os.environ['DB_PASSWORD']); "
     "db.execute('CREATE TABLE IF NOT EXISTS ship_release_probe(value text)'); "
     "db.execute(\\\"INSERT INTO ship_release_probe VALUES ('deployed')\\\"); db.commit()\""
 )

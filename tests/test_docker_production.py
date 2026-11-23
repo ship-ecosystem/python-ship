@@ -10,8 +10,8 @@ from unittest.mock import patch
 from python_ship.config import ShipConfig
 from tests.helpers import DockerProjectTestCase, captured, flag, free_port, wait_http
 
-DB_PROBE = ("import os,psycopg; c=psycopg.connect(host=os.environ['DB_HOST'],dbname=os.environ['DB_NAME'],"
-            "user=os.environ['DB_USER'],password=os.environ['DB_PASSWORD']); assert c.execute('SELECT 1').fetchone()[0]==1")
+DB_PROBE = ("import os,psycopg; c=psycopg.connect(host=os.environ['DB_HOST'],dbname=os.environ['DB_DATABASE'],"
+            "user=os.environ['DB_USERNAME'],password=os.environ['DB_PASSWORD']); assert c.execute('SELECT 1').fetchone()[0]==1")
 HARDENING = ("import os,shutil; assert os.getuid()==10001, os.getuid(); "
              "assert shutil.which('uv') is None and shutil.which('pip') is None; "
              "assert not os.path.exists('/app/.env.production') and not os.path.exists('/app/.env'); "

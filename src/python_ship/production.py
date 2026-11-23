@@ -10,7 +10,7 @@ REQUIRED = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*):\?")
 # Every development default a built-in service uses for a secret. Shipping one to production
 # would give every project that forgot the same, publicly known credential.
 DEVELOPMENT_DEFAULTS = frozenset({
-    "ship", "rootship", "shipsecret", "shipsecretplaceholder", "shipsearchkey", "changeme", "0" * 64,
+    "ship", "rootship", "secret", "rootsecret", "shiproot123", "shipsecret123", "shipsecret", "shipsecretplaceholder", "shipsearchkey", "changeme", "0" * 64,
 })
 _KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 

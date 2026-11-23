@@ -20,6 +20,7 @@ from typing import Annotated, Any, NoReturn
 import typer
 
 from . import __version__
+from .capabilities import release_description, required_setting_problems
 from .compose import (
     adapter_problems,
     build_compose,
@@ -36,7 +37,6 @@ from .mutagen import start as start_mutagen
 from .mutagen import stop as stop_mutagen
 from .plugins import Registry, console_commands, load_extensions
 from .production import credential_problems, read_env
-from .capabilities import release_description, required_setting_problems
 from .release import TAG_PATTERN, assemble_release, destination_for, plan_images, source_metadata
 from .runtime import records, status, wait_for_stack
 from .stubs import asset_problems, production_stub_problem, published_version, stub_problems, stub_version_warning

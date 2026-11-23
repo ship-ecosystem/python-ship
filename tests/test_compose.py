@@ -219,6 +219,17 @@ class DevelopmentModelTests(ProjectTestCase):
 
 
 class ProductionModelTests(ProjectTestCase):
+    def test_database_admin_passwords_are_masked_before_compose_exec(self):
+        config = ShipConfig(app="main:app", services={"database": "mysql"},
+                            additional_services=[AdditionalService("database", "mongodb", "events")],
+                            processes={"worker": ["python", "worker.py"]})
+        services = self.model(config, production=True)["services"]
+        for name in ("app", "worker"):
+            self.assertEqual("", services[name]["environment"]["DB_ROOT_PASSWORD"])
+            self.assertEqual("", services[name]["environment"]["EVENTS_MONGODB_ROOT_PASSWORD"])
+        self.assertIn("${DB_ROOT_PASSWORD:?", services["mysql"]["environment"]["MYSQL_ROOT_PASSWORD"])
+        self.assertIn("${EVENTS_MONGODB_ROOT_PASSWORD:?", services["mongodb-events"]["environment"]["MONGO_INITDB_ROOT_PASSWORD"])
+
     def test_production_model(self):
         config = ShipConfig(app="main:app", services={"database": "postgres", "mail": "mailpit", "testing": "selenium",
                                                       "frontend": "node", "storage": "silo"})

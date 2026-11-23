@@ -318,6 +318,13 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
             raise ConfigError(f"Service {service.key!r} environment must map setting names to strings.")
         if not fragment:
             continue  # Absent in this environment, as development-only services are in production.
+        admin_setting = {
+            "mysql": "DB_ROOT_PASSWORD", "mariadb": "DB_ROOT_PASSWORD",
+            "sqlserver": "DB_ROOT_PASSWORD", "mongodb": "MONGODB_ROOT_PASSWORD",
+        }.get(service.key)
+        if admin_setting:
+            # env_file feeds Compose exec as well as the entry point. Keep database admin secrets out of both.
+            variables = {**variables, context.env_prefix + admin_setting: ""}
         if selection.service_name not in fragment:
             raise ConfigError(f"Service {service.key!r} did not define its Compose service {selection.service_name!r}.")
         for service_name, model in deepcopy(fragment).items():

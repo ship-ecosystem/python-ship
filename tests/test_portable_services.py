@@ -47,5 +47,7 @@ class PortableCatalogTests(ProjectTestCase):
     def test_cypress_is_on_demand_and_uses_browser_alias(self):
         model = self.model(ShipConfig(app="main:app", services={"testing": "cypress"}))
         self.assertEqual(["ship-testing"], model["services"]["cypress"]["profiles"])
+        renamed = self.model(ShipConfig(app="main:app", services={"testing": "cypress"}, service_names={"cypress": "browser"}))
+        self.assertEqual("cypress/included:16.3.0", renamed["services"]["browser"]["image"])
         self.assertEqual("http://ship-app.test:8000", model["services"]["cypress"]["environment"]["CYPRESS_BASE_URL"])
         self.assertNotIn("cypress", model["services"]["app"].get("depends_on", {}))

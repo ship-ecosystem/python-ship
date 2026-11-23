@@ -49,7 +49,7 @@ RESERVED_COMMANDS = frozenset({
 FIELDS = (
     "$schema", "framework", "app", "python", "server", "services", "additionalServices", "serviceNames",
     "externalNetwork", "extensions", "name", "siloImage", "publishPorts", "hostUser",
-    "processes", "deployCommands", "nodeAssets", "djangoCollectstatic", "node",
+    "processes", "deployCommands", "nodeAssets", "djangoCollectstatic", "node", "build",
 )
 
 Command = str | list[str]
@@ -82,6 +82,7 @@ class ShipConfig:
     python: str = DEFAULT_PYTHON
     server: str | None = None
     node: str = "24"
+    build: dict[str, Any] = field(default_factory=dict)
     services: dict[str, str] = field(default_factory=dict)
     additional_services: list[AdditionalService] = field(default_factory=list)
     service_names: dict[str, str] = field(default_factory=dict)
@@ -168,6 +169,9 @@ class ShipConfig:
         if server is not None and (not isinstance(server, str) or not SERVICE_NAME.fullmatch(server)):
             problems.append("ship.json \"server\" must be a web server key such as \"uvicorn\" or \"gunicorn\".")
 
+        from .build_environment import validate_build
+        build = data.get("build", {})
+        problems.extend(validate_build(build))
         node = data.get("node", "24")
         if node not in ("22", "24", "26"):
             problems.append('ship.json "node" must select a supported branch: 22, 24 or 26.')
@@ -287,6 +291,7 @@ class ShipConfig:
             python=python,
             server=server,
             node=node,
+            build=dict(build),
             services={group: canonical_service(key) for group, key in services.items()},
             additional_services=additional,
             service_names={canonical_service(old): new for old, new in service_names.items()},
@@ -309,6 +314,8 @@ class ShipConfig:
             "app": self.app,
             "python": self.python,
         }
+        if self.build:
+            payload["build"] = dict(self.build)
         payload["node"] = self.node
         if self.server is not None:
             payload["server"] = self.server
@@ -349,7 +356,7 @@ _ATTRIBUTES = {
     "extensions": "extensions", "name": "name", "siloImage": "silo_image",
     "publishPorts": "publish_ports", "hostUser": "host_user", "processes": "processes",
     "deployCommands": "deploy_commands", "nodeAssets": "node_assets",
-    "djangoCollectstatic": "django_collectstatic", "node": "node",
+    "djangoCollectstatic": "django_collectstatic", "node": "node", "build": "build",
 }
 
 

@@ -21,11 +21,14 @@ class PortableService:
             # Resource identities never follow Compose host renames.
             value = re.sub(r"ship-" + re.escape(original) + r"-([a-z-]+)(?=[:\"\s]|$)",
                            lambda m: context.resource_name + "_" + m[1].replace("-", "_"), value)
-            return value.replace("SHIP_PLACEHOLDER_", context.env_prefix).replace(original, context.service_name)
+            value = value.replace("SHIP_PLACEHOLDER_", context.env_prefix)
+            if "ship_placeholder" in original:
+                return value.replace(original, context.service_name)
+            return value.replace("://" + original + ":", "://" + context.service_name + ":")
         if isinstance(value, list):
             return [self._replace(item, context) for item in value]
         if isinstance(value, dict):
-            return {self._replace(key, context): self._replace(item, context) for key, item in value.items()}
+            return {context.service_name if key == original else self._replace(key, context): item if key == "image" else self._replace(item, context) for key, item in value.items()}
         return value
 
     def compose_fragment(self, context: ServiceContext) -> dict[str, dict[str, Any]]:

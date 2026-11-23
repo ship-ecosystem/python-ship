@@ -67,6 +67,7 @@ def _run(command: list[str], root: Path) -> subprocess.CompletedProcess[str]:
 def release_model(model: dict[str, Any]) -> dict[str, Any]:
     release = deepcopy(model)
     release.pop("x-ship", None)
+    release.pop("secrets", None)
     for service in release["services"].values():
         service.pop("build", None)
         for env_file in service.get("env_file", []):

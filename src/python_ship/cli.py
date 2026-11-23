@@ -20,6 +20,7 @@ from typing import Annotated, Any, NoReturn
 import typer
 
 from . import __version__
+from .build_environment import build_problems
 from .capabilities import release_description, required_setting_problems
 from .compose import (
     adapter_problems,
@@ -163,6 +164,7 @@ def config_problems(project: Path, *, production: bool = True) -> list[str]:
                 problems.extend(credential_problems(model, project))
                 problems.extend(required_setting_problems(release_description(registry.adapter(config), config, project), project))
     problems.extend(asset_problems(project, config))
+    problems.extend(build_problems(config, project))
     return list(dict.fromkeys(problems))
 
 
@@ -174,7 +176,7 @@ def build_production(project: Path, config: ShipConfig, tag: str) -> tuple[dict[
         fail(problem)
     problems = stub_problems(project, config)
     model = build_compose(config, project, production=True)
-    problems += credential_problems(model, project) + asset_problems(project, config)
+    problems += credential_problems(model, project) + asset_problems(project, config) + build_problems(config, project)
     problems += required_setting_problems(release_description(load_extensions(config).adapter(config), config, project), project)
     if problems:
         fail(" ".join(problems))
@@ -448,7 +450,8 @@ def create_app(adapter_commands: dict[str, list[str]] | None = None) -> typer.Ty
                 arguments = arguments[1:]
             prefix = compose_prefix(project, config)
             if selected.service.key == "cypress":
-                return run(prefix + ["run", "--rm", "--no-deps", *tty_flags(), selected.service_name, "--", *arguments], project)
+                return run(prefix + ["run", "--rm", "--no-deps", *tty_flags(), "--entrypoint", "sh", selected.service_name,
+                    "-c", 'set -eu; mkdir -p /e2e/node_modules; if [ ! -e /e2e/node_modules/cypress ]; then ln -s /usr/local/lib/node_modules/cypress /e2e/node_modules/cypress; fi; exec cypress run "$@"', "ship-cypress", *arguments], project)
             return run(prefix + ["exec", *tty_flags(), config.app_service, "python", "-m", "pytest", *arguments], project)
         return execute(action)
 

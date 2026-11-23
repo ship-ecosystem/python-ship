@@ -45,7 +45,7 @@ GROUPS = {
 }
 
 DOCKERIGNORE = (
-    ".env\n.env.*\n!.env.example\n"
+    ".ship-secrets/\n.env\n.env.*\n!.env.example\n"
     "**/.env\n**/.env.*\n**/.venv\n**/__pycache__\n"
     "**/*.pem\n**/*.key\n**/id_rsa\n**/id_ed25519\nsecrets/\n"
     "node_modules/\n**/node_modules/\nstaticfiles/\n"
@@ -55,11 +55,12 @@ DOCKERIGNORE = (
 # Re-applied as the file's last lines before every production build, so a hand-edited
 # .dockerignore can't re-include a secret or an earlier release into the next image.
 RELEASE_IGNORE_GUARD = (
-    "# python-ship release guard\n"
+    "# python-ship release guard\n.ship-secrets/\n"
     ".env\n.env.*\n**/.env\n**/.env.*\n"
     "dist/ship/\n.npmrc\n**/.npmrc\nauth.json\n**/auth.json\n"
 )
 GITIGNORE = (
+    "/.ship-secrets/",
     "/.env.production",
     "/dist/ship/",
     "/ship/docker-compose.generated.yml",

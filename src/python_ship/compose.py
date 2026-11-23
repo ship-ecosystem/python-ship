@@ -242,6 +242,7 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
                 "PYTHON_VERSION": config.python,
                 "SHIP_PYTHON_FLOOR": python_floor(),
                 "SHIP_SERVER_REQUIREMENT": server.requirement,
+                **{key: value.replace("$", "$$") for key, value in config.build.get("publicEnv", {}).items()},
             },
         },
         "command": _app_command(config, project_root, registry, environment),
@@ -280,6 +281,13 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
 
     services: dict[str, Any] = {app_name: app}
     compose: dict[str, Any] = {"name": name, "services": services}
+    secret_definitions = {f"ship_build_{key}": {"file": str(project_root / ".ship-secrets" / key)}
+                          for key in config.build.get("secrets", [])}
+    if config.build.get("npmrc"):
+        secret_definitions["ship_npmrc"] = {"file": str(project_root / ".ship-secrets/npmrc")}
+    if secret_definitions:
+        compose["secrets"] = secret_definitions
+        app["build"]["secrets"] = list(secret_definitions)
     app_processes: list[tuple[str, dict[str, Any]]] = []
     volumes: dict[str, None] = {}
 

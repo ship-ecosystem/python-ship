@@ -6,11 +6,11 @@ import json
 from pathlib import Path
 import re
 
-REQUIRED = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*):\?")
+REQUIRED = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*):?\?")
 # Every development default a built-in service uses for a secret. Shipping one to production
 # would give every project that forgot the same, publicly known credential.
 DEVELOPMENT_DEFAULTS = frozenset({
-    "ship", "rootship", "secret", "rootsecret", "shiproot123", "shipsecret123", "shipsecret", "shipsecretplaceholder", "shipsearchkey", "changeme", "0" * 64,
+    "ship", "rootship", "secret", "rootsecret", "shiproot123", "shipsecret123", "shipsecret", "shipsecretplaceholder", "shipsearchkey", "ship-centrifugo-api-key", "ship-centrifugo-token-secret", "changeme", "0" * 64,
 })
 _KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
@@ -50,7 +50,7 @@ def read_env(path: Path) -> dict[str, str]:
 
 
 def required_variables(model: dict) -> list[str]:
-    return sorted(set(REQUIRED.findall(json.dumps(model))))
+    return sorted(set(REQUIRED.findall(json.dumps(model).replace("$$", ""))))
 
 
 def credential_problems(model: dict, root: Path) -> list[str]:

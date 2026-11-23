@@ -15,8 +15,8 @@ import psycopg
 async def app(scope, receive, send):
     if scope['type'] != 'http':
         return
-    with psycopg.connect(host=os.environ['DB_HOST'], dbname=os.environ['DB_NAME'],
-                         user=os.environ['DB_USER'], password=os.environ['DB_PASSWORD']) as db:
+    with psycopg.connect(host=os.environ['DB_HOST'], dbname=os.environ['DB_DATABASE'],
+                         user=os.environ['DB_USERNAME'], password=os.environ['DB_PASSWORD']) as db:
         value = db.execute('SELECT value FROM ship_release_probe').fetchone()[0].encode()
     await send({'type': 'http.response.start', 'status': 200, 'headers': []})
     await send({'type': 'http.response.body', 'body': value})
@@ -24,8 +24,8 @@ async def app(scope, receive, send):
 
 MIGRATE = (
     "import os,psycopg; "
-    "db=psycopg.connect(host=os.environ['DB_HOST'],dbname=os.environ['DB_NAME'],"
-    "user=os.environ['DB_USER'],password=os.environ['DB_PASSWORD']); "
+    "db=psycopg.connect(host=os.environ['DB_HOST'],dbname=os.environ['DB_DATABASE'],"
+    "user=os.environ['DB_USERNAME'],password=os.environ['DB_PASSWORD']); "
     "db.execute('CREATE TABLE ship_release_probe(value text)'); "
     "db.execute(\"INSERT INTO ship_release_probe VALUES ('deployed')\"); db.commit(); db.close()"
 )

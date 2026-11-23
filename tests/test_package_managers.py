@@ -46,7 +46,9 @@ class PackageManagerTests(ProjectTestCase):
         self.init("--testing", "cypress")
         with fake_docker(tty=False) as docker, captured():
             self.assertEqual(0, self.ship("test", "--", "--spec", "test.cy.js"))
-        self.assertEqual(["run", "--rm", "--no-deps", "-T", "cypress", "--", "--spec", "test.cy.js"], docker.last[-8:])
+        self.assertIn("--entrypoint", docker.last)
+        self.assertEqual(["ship-cypress", "--spec", "test.cy.js"], docker.last[-3:])
+        self.assertIn('exec cypress run "$@"', docker.last[-4])
 
     def test_doctor_does_not_regenerate_the_compose_file(self):
         self.init()

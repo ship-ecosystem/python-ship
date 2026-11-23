@@ -56,13 +56,13 @@ class ReleaseDockerTests(DockerProjectTestCase):
         manifest = json.loads((release / "release.json").read_text())
         compose = ["docker", "compose", "--project-directory", str(release)]
         for entry in manifest["images"]:
-            if entry["image"].startswith("rel-"):
-                self.addCleanup(subprocess.run, ["docker", "image", "rm", "-f", entry["image"]], capture_output=True)
+            if entry["ref"].startswith("rel-"):
+                self.addCleanup(subprocess.run, ["docker", "image", "rm", "-f", entry["ref"]], capture_output=True)
         # Registered after the image removals so it runs before them.
         self.addCleanup(subprocess.run, compose + ["down", "--volumes"], capture_output=True)
         for entry in manifest["images"]:
             if any(service == "app" for service in entry["services"]):
-                subprocess.run(["docker", "image", "rm", entry["image"]], capture_output=True)
+                subprocess.run(["docker", "image", "rm", entry["ref"]], capture_output=True)
             self.assertEqual(0, subprocess.run(["docker", "load", "-i", entry["file"]], cwd=release, capture_output=True).returncode)
         self.assertFalse(any(release.glob("*.py")))
         deployed = subprocess.run(["sh", "deploy-commands.sh"], cwd=release, capture_output=True, text=True)

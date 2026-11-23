@@ -7,10 +7,12 @@ import json
 from pathlib import Path
 
 from . import __version__
+from .build_environment import protect_runs
 from .config import ShipConfig
 from .package_managers import LOCKFILES, asset_stage, inspect_manager, node_dockerfile
 from .uv import UV_VERSION
 
+TEMPLATE_REVISION = "2"
 FLOOR_SCRIPT = "check-python-security-floor.py"
 ASSET_STAGE = """FROM node:24.18.0-alpine3.24 AS assets
 WORKDIR /assets
@@ -27,11 +29,11 @@ def _template(*parts: str) -> str:
 
 
 def render_dockerfile(config: ShipConfig, root: Path | None = None) -> str:
-    return (
+    return protect_runs(
         _template("Dockerfile")
         .replace("@UV_VERSION@", UV_VERSION)
         .replace("@ASSET_STAGE@", asset_stage(root or Path.cwd(), config.node) if config.node_assets else "")
-        .replace("@ASSET_COPY@", ASSET_COPY if config.node_assets else "")
+        .replace("@ASSET_COPY@", ASSET_COPY if config.node_assets else ""), config
     )
 
 
@@ -54,6 +56,8 @@ def publish_stubs(root: Path, config: ShipConfig, *, force: bool) -> bool:
     if published:
         dockerfile.write_text(render_dockerfile(config, root), encoding="utf-8", newline="\n")
         (ship / ".ship-version").write_text(__version__ + "\n", encoding="utf-8")
+        (ship / ".ship-revision").write_text(TEMPLATE_REVISION + "\n", encoding="utf-8")
+        (ship / ".ship-build-inputs").write_text(json.dumps({"public": sorted(config.build.get("publicEnv", {})), "secrets": sorted(config.build.get("secrets", [])), "npmrc": config.build.get("npmrc", False), "node": config.node}), encoding="utf-8")
     if config.services.get("frontend") == "node":
         node = ship / "node"
         node.mkdir(exist_ok=True)
@@ -79,7 +83,9 @@ def published_version(root: Path) -> str | None:
 
 def stub_version_warning(root: Path) -> str | None:
     version = published_version(root)
-    if version != __version__:
+    revision_path = root / "ship/.ship-revision"
+    revision = revision_path.read_text().strip() if revision_path.is_file() else None
+    if version != __version__ or revision != TEMPLATE_REVISION:
         return (
             f"ship/Dockerfile was published by python-ship {version or 'an unknown version'}, "
             f"but {__version__} is installed. Run `ship init --force` to republish it "
@@ -117,6 +123,18 @@ def stub_problems(root: Path, config: ShipConfig | None) -> list[str]:
         problems.append(f"ship/{FLOOR_SCRIPT} is missing; run `ship init` to publish it.")
     if config is None:
         return problems
+    inputs = root / "ship/.ship-build-inputs"
+    expected = {"public": sorted(config.build.get("publicEnv", {})), "secrets": sorted(config.build.get("secrets", [])), "npmrc": config.build.get("npmrc", False), "node": config.node}
+    try:
+        actual = json.loads(inputs.read_text()) if inputs.is_file() else None
+    except (ValueError, OSError):
+        actual = None
+    if actual != expected:
+        problems.append("Build configuration needs refreshed ship templates; review your edits and run ship init --force.")
+    if config.services.get("frontend") == "node":
+        node = root / "ship/node/Dockerfile"
+        if not node.is_file() or node.read_text() != node_dockerfile(root, config.node):
+            problems.append("Frontend Node template is missing or stale; run ship init --force after reviewing edits.")
     for problem in (server_stub_problem(root, config), asset_stub_problem(root, config)):
         if problem:
             problems.append(problem)
@@ -133,6 +151,9 @@ def production_stub_problem(root: Path) -> str | None:
     text = _dockerfile(root)
     if text is None or "AS production" not in text:
         return "ship/Dockerfile has no production stage; run `ship init --force` to refresh it."
+    revision = root / "ship/.ship-revision"
+    if not revision.is_file() or revision.read_text().strip() != TEMPLATE_REVISION:
+        return "Production templates are outdated; review edits and run ship init --force."
     return None
 
 

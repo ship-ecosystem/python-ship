@@ -45,6 +45,7 @@ RUN uv pip install "$SHIP_SERVER_REQUIREMENT"
 FROM builder AS production-dependencies
 RUN if [ -f uv.lock ] && [ -f pyproject.toml ]; then uv sync --locked --no-dev; \
     elif [ -f pyproject.toml ]; then uv sync --no-dev; fi
+RUN uv pip install "$SHIP_SERVER_REQUIREMENT"
 
 # Production: the installed app and server only. No uv, no pip, no source bind mount, not root.
 FROM base AS production

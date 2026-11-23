@@ -47,6 +47,13 @@ class CapabilityTests(ProjectTestCase):
         self.assertEqual(environment["AMQP_URL"], environment["CELERY_BROKER_URL"])
         self.assertEqual({"AMQP_URL": "amqps://external"}, module.application_environment({"AMQP_URL": "amqps://external"}))
 
+    def test_exec_prepares_the_same_credentials_as_application_start(self):
+        from python_ship.cli import application_argv
+        config = ShipConfig(app="main:app", services={"database": "mongodb"})
+        self.assertEqual(["python", "/usr/local/bin/ship-app-entrypoint.py", "python", "-V"],
+                         application_argv(config, "app", ["python", "-V"]))
+        self.assertEqual(["mongosh"], application_argv(config, "mongodb", ["mongosh"]))
+
     def test_mongodb_uri_encodes_credentials_and_removes_admin_settings(self):
         path = Path(__file__).resolve().parents[1] / "src/python_ship/templates/app-entrypoint.py"
         spec = spec_from_file_location("ship_test_entrypoint", path)

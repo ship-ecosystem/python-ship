@@ -105,6 +105,14 @@ def compose_prefix(project: Path, config: ShipConfig) -> list[str]:
     return prefix
 
 
+def application_argv(config: ShipConfig, service: str, arguments: list[str]) -> list[str]:
+    # Exec does not invoke Docker ENTRYPOINT; prepare the same service credentials as startup.
+    managed = set(config.services.values()) | {entry.service for entry in config.additional_services}
+    if service == config.app_service and managed & {"mongodb", "rabbitmq"}:
+        return ["python", "/usr/local/bin/ship-app-entrypoint.py", *arguments]
+    return arguments
+
+
 def tty_flags() -> list[str]:
     # Without a terminal (CI, piped input) `docker compose exec` must not allocate one.
     return [] if sys.stdin.isatty() else ["-T"]
@@ -296,8 +304,9 @@ def create_app(adapter_commands: dict[str, list[str]] | None = None) -> typer.Ty
             if not arguments:
                 fail("ship exec requires a command after the service name, such as `ship exec app python -V`.")
             project = root()
-            prefix = compose_prefix(project, read_config(project))
-            return run(prefix + ["exec", *tty_flags(), service, *arguments], project)
+            config = read_config(project)
+            prefix = compose_prefix(project, config)
+            return run(prefix + ["exec", *tty_flags(), service, *application_argv(config, service, arguments)], project)
         return execute(action)
 
     @app.command("shell")
@@ -307,7 +316,7 @@ def create_app(adapter_commands: dict[str, list[str]] | None = None) -> typer.Ty
             project = root()
             config = read_config(project)
             prefix = compose_prefix(project, config)
-            return run(prefix + ["exec", *tty_flags(), service or config.app_service, "sh"], project)
+            return run(prefix + ["exec", *tty_flags(), service or config.app_service, *application_argv(config, service or config.app_service, ["sh"])], project)
         return execute(action)
 
     @app.command("logs")
@@ -452,7 +461,7 @@ def create_app(adapter_commands: dict[str, list[str]] | None = None) -> typer.Ty
             if selected.service.key == "cypress":
                 return run(prefix + ["run", "--rm", "--no-deps", *tty_flags(), "--entrypoint", "sh", selected.service_name,
                     "-c", 'set -eu; mkdir -p /e2e/node_modules; if [ ! -e /e2e/node_modules/cypress ]; then ln -s /usr/local/lib/node_modules/cypress /e2e/node_modules/cypress; fi; exec cypress run "$@"', "ship-cypress", *arguments], project)
-            return run(prefix + ["exec", *tty_flags(), config.app_service, "python", "-m", "pytest", *arguments], project)
+            return run(prefix + ["exec", *tty_flags(), config.app_service, *application_argv(config, config.app_service, ["python", "-m", "pytest", *arguments])], project)
         return execute(action)
 
     @app.command("uv", context_settings=PROXY_CONTEXT)
@@ -473,7 +482,7 @@ def _adapter_command(name: str, command_prefix: list[str]) -> Callable[[typer.Co
             project = root()
             config = read_config(project)
             prefix = compose_prefix(project, config)
-            return run(prefix + ["exec", *tty_flags(), config.app_service, *command_prefix, *proxy_tail(name, 1)], project)
+            return run(prefix + ["exec", *tty_flags(), config.app_service, *application_argv(config, config.app_service, [*command_prefix, *proxy_tail(name, 1)])], project)
         return execute(action)
     command.__name__ = f"{name}_command"
     return command

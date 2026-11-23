@@ -26,8 +26,8 @@ is how it's registered (see [Extending without forking](#extending-without-forki
 
 
    class RabbitMQService:
-       key = "rabbitmq"
-       label = "RabbitMQ"
+       key = "community-broker"
+       label = "Community broker"
        group = "queue"
 
        def compose_fragment(self, context: ServiceContext) -> dict:
@@ -111,7 +111,7 @@ is how it's registered (see [Extending without forking](#extending-without-forki
   always matches what the container was provisioned with.
 - **Early validation.** Implement `ValidatesConfiguration.validate(context)`
   to return problems before Docker is invoked. `MySqlService` uses it to
-  reject `DB_USER=root`, which the MySQL image refuses to start with.
+  reject `DB_USERNAME=root`, which the MySQL image refuses to start with.
 
 ## Supporting multiple named instances
 
@@ -200,6 +200,24 @@ returns `context.app_process(command, **settings)` instead of a Compose
 service of its own. Ship turns it into a container of the app's image, with
 its build, environment, networks, dependencies and (in development) bind
 mount, no published ports and a 60s stop grace period; `settings` are merged
-in. The built-in `CeleryService` uses it for its worker and beat containers.
+in. The built-in `CeleryService` uses it for its worker container.
 A release's deploy script doesn't start these containers before the deploy
 commands, and Mutagen syncs into them.
+
+
+## Optional release and setup metadata
+
+A service can implement `http_endpoints(context)` returning endpoint objects with
+`port`, `role`, optional `health`, and optional `urlSetting` (a setting name).
+HTTP services join the configured external networks and appear in release.json.
+
+An adapter can implement `describe_release(config, project_root)` returning
+`health`, `urlSetting` and `requiredEnv` (setting names only), and
+`suggest_processes(config, project_root)` returning name-to-process definitions.
+Suggestions require explicit selection in init. Existing adapters and community
+services do not need these optional hooks.
+
+Ship's catalog is optional. Projects can use development Compose overrides,
+explicit extension providers and independently managed services. Their connection
+settings and client libraries remain owned by the application. Flower is not a
+built-in provider; users can supply it the same way as any custom service.

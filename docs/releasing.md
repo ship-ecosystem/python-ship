@@ -15,11 +15,12 @@ commit on `main`. The package version has one source,
 
 1. On a branch, set `__version__` in `src/python_ship/__init__.py`, and move
    the `Unreleased` changelog entries under `## [X.Y.Z] - YYYY-MM-DD`.
-2. Run the local checks and the Docker suites:
+2. Publish coordinated spec/schema updates before the candidate, then run the local checks and the Docker suites:
 
    ```sh
    python scripts/check_local.py
    SHIP_DOCKER_TEST=1 SHIP_PRODUCTION_DOCKER_TEST=1 SHIP_RELEASE_DOCKER_TEST=1 \
+   SHIP_PORTABLE_DOCKER_TEST=1 SHIP_TOOLING_DOCKER_TEST=1 \
        python -m unittest discover -s tests -t . -p 'test_docker_*.py'
    RELEASE_TAG=vX.Y.Z python scripts/check_release.py
    ```

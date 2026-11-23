@@ -9,20 +9,16 @@
 
 A framework-agnostic, cross-platform Docker development environment for
 Python web apps, with portable production releases. It is the Python member
-of the Ship ecosystem, alongside [PHP Ship](https://github.com/php-ship/ship):
+of the Ship ecosystem, alongside [PHP Ship](https://github.com/ship-ecosystem/php-ship):
 the same commands, the same `ship.json` vocabulary and the same release
 artifact, for any ASGI or WSGI app — a plain callable, Django, FastAPI or
 Flask built in, anything else through a community adapter.
 
-**Status: beta, first public release.** `init`/`up`/`down`/`exec`/`shell`/
-`logs`/`db`/`config:test`/`build`/`release`/`npm`/`uv`/`manage` all work
-end-to-end against a real Docker daemon, for a framework-free app, a Django,
-a FastAPI and a Flask app alike, on Uvicorn, Hypercorn, Gunicorn or Granian: development stacks with a real database and
-cache, production images, and releases booted on a machine with nothing but
-Docker. CI runs the unit suite on Linux, macOS and Windows with Python
-3.11–3.15, and the Docker suites on every push to `main`. See
-[`docs/roadmap.md`](https://github.com/ship-ecosystem/python-ship/blob/main/docs/roadmap.md)
-for what's built and what's next.
+**Status: active development.** The shared workflow follows PHP Ship, with Python
+adapters for no framework, Django, FastAPI and Flask, and Uvicorn, Hypercorn,
+Gunicorn and Granian servers. See [parity and verification](docs/parity-report.md)
+for the current local evidence and remaining release gates. Local verification
+is separate from the prepared Linux/macOS/Windows CI matrix.
 
 ## Contents
 
@@ -70,7 +66,7 @@ otherwise rebuild by hand:
   server needs nothing but Docker — see
   [Production releases](#production-releases).
 - **A real database shell without a published port.** `ship db` opens
-  `psql`/`mysql` inside the database container, reading its credentials from
+  the database client inside the database container, reading its credentials from
   that container's own environment.
 - **Not tied to a framework.** The core knows nothing about Django or
   FastAPI; both are [`FrameworkAdapter`](https://github.com/ship-ecosystem/python-ship/blob/main/src/python_ship/contracts.py)
@@ -93,7 +89,7 @@ otherwise rebuild by hand:
 - [uv](https://docs.astral.sh/uv/) on the host. `ship init` offers to install
   it with Astral's official installer if it's missing, and makes no changes to
   the project if you decline.
-- An ASGI app. Nothing else: no framework, no dependency manifest, no local
+- An ASGI or WSGI app. Nothing else: no framework, no dependency manifest, no local
   database, no Node install.
 
 ## Quick start
@@ -109,8 +105,7 @@ ship shell                    # drop into the app container
 ship down
 ```
 
-`ship init` detects Django (`manage.py`) and FastAPI (a `FastAPI()` app) and
-suggests the ASGI target to serve. A framework-free app works too — save this
+`ship init` detects Django (`manage.py`), FastAPI and Flask (instances or factories), then suggests the compatible target and server. A framework-free app works too — save this
 as `main.py` and run `ship init`:
 
 ```python
@@ -137,19 +132,21 @@ Production is a separate pair of commands, not a flag on `ship up` — see
 
 | Command | What it does |
 |---|---|
-| `ship init` | Interactive picker for the framework, ASGI target, server and services (database, cache, storage, ...); writes `ship.json` and publishes `ship/`. Every option has a flag for non-interactive use (`ship init --help`). Re-run it to change selections — see [Adding a service later](#adding-a-service-later). |
+| `ship init` | Interactive picker for the framework, ASGI target, server and services (database, cache, storage, ...); writes `ship.json` and publishes `ship/`. Scriptable flags cover services, instances, processes and networks (`ship init --help`). Re-run it to change selections — see [Adding a service later](#adding-a-service-later). |
 | `ship up` | Regenerates `ship/docker-compose.generated.yml` from `ship.json`, runs `docker compose up --build`, then waits until every container is running, every healthcheck passes and the app answers HTTP. Development only. |
 | `ship build` | Builds every project-owned production image, tagged locally. Needs `.env.production` as soon as a selected service has a required credential. See [Production releases](#production-releases). |
-| `ship release --tag <tag>` | Builds the same images (re-tagged) and assembles the portable release under `dist/ship/<tag>/`. |
+| `ship release --tag <tag> [--force] [--no-env]` | Builds the same images (re-tagged) and assembles the portable release under `dist/ship/<tag>/`. |
 | `ship down [--volumes]` | `docker compose down`. `--volumes` also deletes named volumes (database and storage data — use with care). |
 | `ship exec <service> <cmd...>` | Runs a command inside a running service. The generic escape hatch every shortcut below wraps. |
 | `ship shell [service]` | Opens a shell (`sh`) in a service; defaults to the app. |
 | `ship logs [service] [-f]` | Shows logs for one service, or all of them. `-f`/`--follow` streams. |
-| `ship db [instance]` | Opens the database's client (`psql`/`mysql`) with credentials from its own container. Name one of `additionalServices`' databases to open that instance instead. |
+| `ship db [instance]` | Opens the database's client (`psql`/`mysql`/`mariadb`/`mongosh`/`sqlcmd`) with credentials from its own container. Name one of `additionalServices`' databases to open that instance instead. |
 | `ship config:test` | Validates `ship.json`, `ship/`, both Compose models, and production credentials in `.env.production` — without Docker. Reports every problem it finds in one pass. |
 | `ship doctor` | Shows the installed and published versions and the state and health of every container, with a recovery hint for anything that crashed. |
 | `ship uv <args...>` | Runs uv dependency commands (`add`, `remove`, `lock`, `tree`, ...) in a temporary container with the project's Python. See [Dependencies](#dependencies-and-ship-uv). |
-| `ship npm <args...>` | Runs `npm` in the Node frontend service (e.g. `ship npm install`, `ship npm run dev`). |
+| `ship npm/pnpm/yarn <args...>` | Runs the selected, exactly pinned tool in the Node frontend service. The manifest and lockfile remain authoritative. |
+| `ship package-manager TOOL[@VERSION] [--yes]` | Switches the frontend tool in its running container, records the pin and reinstalls; restores recorded files and dependencies after installation failure. Rebuild with `ship up`. |
+| `ship test [-- ARGS...]` | Runs Cypress on demand, or Python pytest against the selected Selenium/Playwright service. Install/configure the application's test client first. |
 | `ship manage <args...>` | Runs `python manage.py` in the app — only registered for Django projects. |
 | `ship flask <args...>` | Runs the `flask` CLI in the app (`FLASK_APP` is set) — only registered for Flask projects. A community adapter registers its own commands the same way. |
 | `ship --version` | Shows the installed python-ship version. |
@@ -170,11 +167,20 @@ read them — that stays your app's decision.
 
 | Service | Wired automatically | Still needed in the app |
 |---|---|---|
-| PostgreSQL (`postgres`, or `pgsql`) | `DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USER`/`DB_PASSWORD`, `ship db` | A driver such as `psycopg[binary]`, and settings that read `DB_*` |
+| PostgreSQL (`postgres`, or `pgsql`) | `DB_HOST`/`DB_PORT`/`DB_DATABASE`/`DB_USERNAME`/`DB_PASSWORD`, `ship db` | A driver such as `psycopg[binary]`, and settings that read `DB_*` |
 | MySQL (`mysql`) | The same `DB_*` variables, a separate `DB_ROOT_PASSWORD` the app never receives, `ship db` | A driver such as `mysqlclient` or `PyMySQL` |
+| MariaDB (`mariadb`) | `DB_HOST`/`DB_PORT`/`DB_DATABASE`/`DB_USERNAME`/`DB_PASSWORD`, separate admin credential and `ship db` | A Python MySQL/MariaDB driver and framework settings |
+| MongoDB (`mongodb`) | Separate application/admin users, structured connection settings and encoded `MONGODB_URI` at application start, `ship db` | A MongoDB client; select/configure the framework backend explicitly |
+| SQL Server (`sqlserver`) | Application database/login, separate admin credential, `DB_*`, `ship db` | A Python driver and any native libraries it needs; an appropriate production license |
+| Valkey (`valkey`) | `REDIS_HOST`/`REDIS_PORT`, persistent Redis-compatible protocol | A Redis-compatible client; construct the connection from the injected settings |
+| Memcached (`memcached`) | `MEMCACHED_HOST`/`MEMCACHED_PORT`; ephemeral cache | A Memcached client; do not use it for persistent queues |
+| Elasticsearch (`elasticsearch`) | Authenticated single-node service, `ELASTICSEARCH_*` | An Elasticsearch client and suitable host resources |
+| Typesense (`typesense`) | Persistent service, `TYPESENSE_HOST`/`PORT`/`PROTOCOL`/`API_KEY` | A Typesense client and application collection schemas |
+| Centrifugo (`centrifugo`) | HTTP publishing API, token secret and WebSocket endpoint; optional Redis/Valkey engine | Application publishing/token logic and browser client; production origins and real credentials |
+| Cypress (`cypress`) | On-demand development browser container and internal base URL | Cypress tests/configuration; run `ship test` |
 | Redis (`redis`) | `REDIS_URL`; RDB snapshots plus an append-only log | `redis` |
 | RabbitMQ (`rabbitmq`, broker group) | `AMQP_URL`; management UI on `127.0.0.1:${RABBITMQ_MANAGEMENT_PORT:-15672}` in development | A client such as `kombu` or `pika`, or just Celery |
-| Celery (`celery`, tasks group) | A worker and a beat container from the app's image; `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`, `CELERY_APP` | `celery` in your dependencies — see [Background tasks](#background-tasks-celery) |
+| Celery (`celery`, tasks group) | A worker container from the app's image; `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`, `CELERY_APP` | `celery` in your dependencies — see [Background tasks](#background-tasks-celery) |
 | Mailpit (`mailpit`) | `MAIL_HOST`/`MAIL_PORT` (SMTP), web UI on `127.0.0.1:${MAILPIT_WEB_PORT:-8025}`. Development only | Nothing for `smtplib`; point your framework's mail settings at the variables |
 | Meilisearch (`meilisearch`) | `MEILISEARCH_URL`/`MEILISEARCH_KEY` | `meilisearch` (or plain HTTP) |
 | Garage / SeaweedFS / RustFS / Silo | `AWS_ENDPOINT`/`AWS_USE_PATH_STYLE_ENDPOINT`/`AWS_DEFAULT_REGION`/`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_BUCKET` | `boto3` with path-style addressing. Garage creates its bucket; with the others, create `AWS_BUCKET` once. Silo has two image variants — see [Silo on older CPUs](#silo-on-older-cpus) |
@@ -190,7 +196,7 @@ import os
 DATABASES = {"default": {
     "ENGINE": "django.db.backends.postgresql",
     "HOST": os.environ["DB_HOST"], "PORT": os.environ["DB_PORT"],
-    "NAME": os.environ["DB_NAME"], "USER": os.environ["DB_USER"],
+    "NAME": os.environ["DB_DATABASE"], "USER": os.environ["DB_USERNAME"],
     "PASSWORD": os.environ["DB_PASSWORD"],
 }}
 CACHES = {"default": {"BACKEND": "django.core.cache.backends.redis.RedisCache",
@@ -220,11 +226,11 @@ with sync_playwright() as playwright:
     page.goto(os.environ["APP_URL"])
 ```
 
-Every image carries an exact version tag, reviewed through Renovate:
+Built-in images use reviewed tags or digests; release registry references are pinned to their repository digest. Representative images:
 
 | Service | Image |
 |---|---|
-| PostgreSQL | `postgres:17.12-alpine3.24` |
+| PostgreSQL | `postgres:18-alpine` |
 | MySQL | `mysql:9.7.4` |
 | Redis | `redis:8.10.3-alpine3.23` |
 | Mailpit | `axllent/mailpit:v1.31.1` |
@@ -235,7 +241,7 @@ Every image carries an exact version tag, reviewed through Renovate:
 | Silo | `pgsty/silo:RELEASE.2026-09-16T00-00-00Z` |
 | Selenium | `selenium/standalone-chrome:4.52.0-20261101` |
 | Playwright | `mcr.microsoft.com/playwright:v1.64.1-noble` |
-| Node.js | `node:24.18.0-alpine3.24` |
+| Node.js | Reviewed digest-pinned Node 22/24/26 image (`node` field) |
 
 ### Silo on older CPUs
 
@@ -284,13 +290,13 @@ names match PHP Ship's `ship.json`, so a team using both reads one format:
 }
 ```
 
-- `$schema` — the shared [ship.json schema](https://github.com/ship-ecosystem/python-ship/blob/main/schema/ship.schema.json),
+- `$schema` — the shared [ship.json schema](https://github.com/ship-ecosystem/spec/blob/main/schemas/ship.schema.json),
   written by `ship init` so editors validate and complete the file. PHP Ship
   uses the same schema.
 - `framework` — the adapter: `generic` (any ASGI or WSGI callable), `django`,
   `fastapi`, `flask`, or a community adapter's key.
 - `app` — the ASGI or WSGI target to serve, `module:callable`. A module
-  under `src/` works too.
+  under `src/` works too. Flask factories may use `app:create_app()`; project code is never imported on the host for detection.
 - `python` — the Python branch built into the image (`ARG PYTHON_VERSION`).
   Keep it a bare branch (`"3.13"`) so every build gets that branch's latest
   patch release. See [Python security floor](#python-security-floor).
@@ -300,14 +306,13 @@ names match PHP Ship's `ship.json`, so a team using both reads one format:
   [Web servers](#web-servers-asgi-and-wsgi).
 - `services` — one selected service per group; a group without an entry
   means "none". PostgreSQL is `postgres`; `pgsql`, PHP Ship's original name,
-  is accepted too (and in `additionalServices` and `serviceNames`), so a
-  `ship.json` written by either package reads the same in both.
+  is accepted too (and in `additionalServices` and `serviceNames`), so service identifiers stay aligned across the ecosystem. Language-specific fields remain producer-specific.
 - `additionalServices` — extra, named instances (a second database, a second
   Redis, ...). See [Multiple instances of a service](#multiple-instances-of-a-service).
 - `extensions` — entry point names of installed community adapters, services
   and servers to load. See [Extending ship](#extending-ship).
 - `serviceNames` / `externalNetwork` — rename Compose services and attach the
-  app to a pre-existing Docker network. See
+  app and HTTP services to pre-existing Docker networks. `externalNetwork` accepts a name or nonempty list of names. See
   [Custom service names and an external network](#custom-service-names-and-an-external-network).
 - `name` — the Compose project name; defaults to the directory name. See
   [Running more than one project at once](#running-more-than-one-project-at-once).
@@ -343,15 +348,26 @@ names match PHP Ship's `ship.json`, so a team using both reads one format:
   ```
   Each becomes its own Compose service with the app's image, environment and
   networks, no published ports, and a 60s stop grace period so a worker can
-  finish its job. They run in development too, against the same bind-mounted
-  code. Write each as a shell command, `$VAR` included — Ship escapes every
+  finish its job. They run only in production. Start development workers explicitly, or use a development override. Write each as a shell command, `$VAR` included — Ship escapes every
   `$` so Compose doesn't blank out a variable meant for the container — or as
   an argument list (`["python", "worker.py"]`) to skip the shell.
-- `nodeAssets` — build npm assets into the production image. See
+- `node` — frontend Node branch (`22`, `24` or `26`, default `24`).
+- `build` — explicit public build values and temporary BuildKit credentials; see [build settings](docs/build-environment.md).
+- `nodeAssets` — build npm/pnpm/Yarn assets into the production image. See
   [Frontend dev server](#frontend-dev-server-vite-hmr).
 - `djangoCollectstatic` — run `collectstatic` at every production boot
   (Django only). The files stay in the container, so serve them from the app
   (for example with WhiteNoise) or from a proxy that shares the volume.
+
+Processes may also use `{ "command": ..., "healthcheck": ..., "http": ... }`.
+The HTTP block declares a container port, open role, optional health path and
+public URL setting name. It becomes an endpoint in `release.json`.
+
+Setup uses arrow-key selections, service checkboxes and Ctrl+U to go back;
+piped input has numbered prompts. `-n` never asks questions. The final preview
+precedes writes. Scriptable flags include `--name`, repeated `--additional-service
+GROUP=PROVIDER:NAME`, `--process NAME=COMMAND_OR_JSON`, `--network`,
+`--deploy-command`, `--remove-instance`, `--remove-process` and `--no-network`.
 
 Host-port collisions are handled with environment variables, not `ship.json`
 — see [Running more than one project at once](#running-more-than-one-project-at-once).
@@ -434,9 +450,9 @@ The Dockerfile installs your dependencies with uv, in this order:
 
 | Project has | Image runs |
 |---|---|
-| `uv.lock` + `pyproject.toml` | `uv sync --locked --no-dev` |
+| `uv.lock` + `pyproject.toml` | `uv sync --locked`; production prunes dev groups with `--no-dev` |
 | `requirements.txt` | `uv pip install -r requirements.txt` |
-| `pyproject.toml` only | `uv sync --no-dev` |
+| `pyproject.toml` only | `uv sync`; production prunes dev groups with `--no-dev` |
 | none of them | nothing — only the web server |
 
 Then it installs the selected web server, so a framework-free app with no
@@ -487,9 +503,10 @@ ship init --cache redis --tasks celery                 # Redis as broker and res
 ship init --broker rabbitmq --cache redis --tasks celery  # RabbitMQ broker, Redis results
 ```
 
-Ship adds two containers built from the app's own image, with its
-environment, dependencies and (in development) code: `celery` runs a worker,
-`celery-beat` runs the beat scheduler. The app and both containers receive:
+Ship adds a worker container from the app's image, with its environment and
+dependencies. In development it also sees the application source. Scheduling
+is independent: add `celery-beat` explicitly as a production process when needed.
+The worker and app receive:
 
 | Variable | Value |
 |---|---|
@@ -510,11 +527,11 @@ celery = Celery("tasks", broker=os.environ["CELERY_BROKER_URL"], backend=os.envi
 Django projects follow Celery's own Django guide; with
 `app.config_from_object("django.conf:settings", namespace="CELERY")`, the
 injected `CELERY_BROKER_URL` and `CELERY_RESULT_BACKEND` are picked up as
-settings. Canvas works as usual (`chain`, `group`, `chord`); chords need a
+settings only after your settings module reads those environment variables. Canvas works as usual (`chain`, `group`, `chord`); chords need a
 real result backend, so select Redis. Set `CELERY_LOG_LEVEL` to change the
 log level. In development the worker restarts on code changes when
 `watchfiles` is installed; otherwise run `ship up` after changing tasks. The
-worker and beat run in production too, and a release's `deploy-commands.sh`
+worker runs in production too, and a release's `deploy-commands.sh`
 starts the broker and database but not them.
 
 ## Production releases
@@ -540,7 +557,7 @@ Both build a materially different image from `ship up`'s development one:
 - **Fresh base images.** Production builds always pull the base image
   (`build.pull`), so a release never ships on a stale cached Python.
 - **Development-only services disappear.** Mailpit, Selenium, Playwright and
-  Node are absent from the production model, along with their variables.
+  Node and Cypress are absent from the production model, along with their variables.
 - **No override file.** `docker-compose.override.yml` is a development
   convenience and never reaches a production image.
 
@@ -578,12 +595,12 @@ ships a security release.
 
 ### `.env.production`
 
-A single project-level file, `.env.production`, is the one source of
-production credentials and config — you create it; Ship never generates one.
-`ship init` adds it to `.gitignore`. `ship build`/`ship release` make its
-values available to `docker compose build`, and `ship release` copies the
-whole file to the release's `.env`, read by the containers at boot.
-`ship release` fails clearly if it doesn't exist.
+`ship init` appends required production setting names to `.env.production`
+with empty values, preserving existing values and comments. Fill them before
+building. It also merges development settings into `.env.example` and `.env`.
+`ship config:test`, `build` and `release` reject missing required credentials
+and known development defaults. The release copies the file privately unless
+`--no-env` is requested. With no required settings, an absent file is allowed.
 
 Selected services' secrets (`DB_PASSWORD`, `DB_ROOT_PASSWORD`,
 `MEILISEARCH_KEY`, `AWS_SECRET_ACCESS_KEY`, `GARAGE_RPC_SECRET`,
@@ -591,44 +608,48 @@ Selected services' secrets (`DB_PASSWORD`, `DB_ROOT_PASSWORD`,
 *required* in production: Compose itself refuses to start without them, and
 `ship config:test`/`ship build`/`ship release` check before Docker is invoked
 — reporting a missing value, or one still set to a development default such
-as `ship`. Non-secret settings (`DB_NAME`, `DB_USER`, `AWS_BUCKET`, ...) keep
+as `ship`. Non-secret settings (`DB_DATABASE`, `DB_USERNAME`, `AWS_BUCKET`, ...) keep
 their defaults unless you set them.
 
 ### What `ship release --tag` produces
 
 ```text
 dist/ship/1.2.0/
-├── docker-compose.yml   # final images: tags, no build:, no source needed
-├── .env                 # copied from .env.production (mode 0600)
-├── images/
-│   ├── app.tar          # docker save — one per unique image, not per service
-│   └── postgres.tar
-├── release.json         # tag, git commit, python-ship version, image digests — no secrets
-├── deploy-commands.sh   # only when deployCommands is set
-└── README.md            # the exact commands to deploy this release
+├── docker-compose.yml   # no build:, registry images pinned by digest
+├── .env                 # optional settings, mode 0600
+├── images/app.tar       # one archive per unique project-owned image
+├── release.json         # canonical ship-release manifest; no secret values
+├── deploy-commands.sh   # optional; mode 0755
+└── README.md            # exact deployment commands
 ```
 
-`dist/ship/` is git-ignored, and excluded from the Docker build context along
-with `.env`/`.env.*`, `.npmrc` and `auth.json`, so no earlier release or
-secret can end up in an image; `ship build`/`ship release` re-apply those
-rules as the last lines of `.dockerignore` every time. On POSIX the release
-directory is owner-only; on Windows, restrict it with filesystem ACLs before
-sharing it. Services that build from identical definitions (the app and every
-`processes` entry) share one image and one archive. Infrastructure images are
-archived too, so the server never needs registry access.
+The folder is private (0700), assembled under a temporary name and published
+only after success. `release.json` is written last as the completeness marker.
+An existing tag needs explicit `--force`; assembly failure preserves the previous
+artifact. A release requires an explicit stable `name` in ship.json.
 
-A deploy, once the folder is on a machine with nothing but Docker:
+The manifest records builder/source/platform, immutable image IDs, archive hashes,
+pulled images, service roles, named volumes, HTTP endpoints, environment names,
+external networks, deploy argv and console commands. The contract is maintained
+in [ship-ecosystem/spec](https://github.com/ship-ecosystem/spec).
+
+Only project-built images are archived; database/cache images are digest-pinned
+and require registry access on the destination. For example:
 
 ```sh
 docker load -i images/app.tar
-docker load -i images/postgres.tar
-sh deploy-commands.sh   # only present when deployCommands is set
+# Create any external networks recorded in release.json first.
+sh deploy-commands.sh  # only when present; infrastructure first, then commands
 docker compose up -d
 ```
 
-Ship deliberately stops there — there's no `ship deploy` that SSHes anywhere.
-Getting the folder onto the server is up to you; what Ship guarantees is that
-the artifact needs nothing else once it's there.
+With `--no-env`, supply destination settings through `.env` for Compose
+interpolation and application startup. Public frontend values are compiled at
+build time; changing runtime settings cannot change the built assets.
+
+Runtime env files, private registry configuration, `.ship-secrets` and previous
+releases are excluded from the build context. Secret values never enter
+release.json. Deployment runs with Docker alone; Ship does not SSH to servers.
 
 ### CI/CD
 
@@ -726,7 +747,7 @@ its own sync session instead, so events are native and polling is off.
 
 Set `VITE_PORT` in `.env` to move both sides at once. Node isn't part of the
 production stack. To compile assets into the production image, set
-`nodeAssets` (`ship init --node-assets`), commit `package-lock.json`, and give
+`nodeAssets` (`ship init --node-assets`), commit the selected tool’s lockfile, and give
 `package.json` a `build` script that writes to `dist/`: the Dockerfile builds
 them in a separate Node stage and copies `dist/` into the Python image, so
 Node never reaches the runtime.
@@ -784,8 +805,9 @@ so run `ship up` again after changing them. Never applies in production.
 
 Every generated Compose file carries a top-level `name:` (`ship.json`'s
 `name`, or the sanitized directory name), which scopes networks and volumes,
-and production uses `<name>-production`. Set `name` explicitly when it must
-stay the same wherever the project is checked out.
+and production uses the same stable project identity, following PHP Ship. Stop a
+development stack before running production on the same daemon. Set `name`
+explicitly when it must stay the same wherever the project is checked out.
 
 Every published port has a variable, read from your shell or the project's
 `.env`:
@@ -833,29 +855,29 @@ without forking Ship. A package registers a Python entry point:
 
 ```toml
 [project.entry-points."python_ship.services"]
-rabbitmq = "ship_rabbitmq:RabbitMQService"
+custom = "ship_custom:CustomService"
 
 [project.entry-points."python_ship.adapters"]
-flask = "ship_flask:FlaskAdapter"
+custom = "ship_custom:CustomAdapter"
 
 [project.entry-points."python_ship.servers"]
-granian = "ship_granian:GranianServer"
+custom = "ship_custom:CustomServer"
 ```
 
 Install it next to the `ship` command (`uv tool install python-ship --with
-ship-rabbitmq`) and select it by entry point name:
+ship-custom`) and select it by entry point name:
 
 ```json
 {
-    "extensions": ["rabbitmq"],
-    "services": {"queue": "rabbitmq"}
+    "extensions": ["custom"],
+    "services": {"custom-group": "custom"}
 }
 ```
 
 Nothing loads unless `extensions` names it. A missing, duplicate or broken
 extension is a configuration error naming the extension. The contracts —
 `ServiceDefinition`, `FrameworkAdapter`, `WebServer`, and the optional
-`ProvidesDatabaseShell`/`ValidatesConfiguration` — are typed protocols in
+`ProvidesDatabaseShell`/`ValidatesConfiguration`/`DescribesRelease`/`SuggestsProcesses`/`ExposesHttp` — are typed protocols in
 [`python_ship.contracts`](https://github.com/ship-ecosystem/python-ship/blob/main/src/python_ship/contracts.py).
 See [`docs/adding-a-service.md`](https://github.com/ship-ecosystem/python-ship/blob/main/docs/adding-a-service.md)
 for a worked example, and the installable

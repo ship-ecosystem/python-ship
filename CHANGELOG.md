@@ -5,6 +5,37 @@ All notable changes to python-ship are documented here. The format follows
 uses [Semantic Versioning](https://semver.org/): before 1.0, a minor release
 may change the extension contracts or `ship.json`, and says how here.
 
+## [Unreleased]
+
+### Added
+
+- PHP workflow and shared-spec parity: canonical ship-release metadata, digest-pinned registry
+  images, project-owned archives, source/platform/image IDs, settings names, HTTP endpoints,
+  volumes, deploy argv and console metadata.
+- Explicit `--force`/`--no-env`, stable release identity, manifest-last publication and prior
+  artifact preservation after assembly failure.
+- MariaDB, MongoDB, SQL Server, Valkey, Memcached, Elasticsearch, Typesense, Centrifugo and
+  Cypress. The catalog has 23 optional services; Flower is deliberately excluded.
+- HTTP process objects, multiple external networks and renamed additional instances.
+- Keyboard-driven setup, grouped selections, back navigation, final preview, automation flags
+  and append-only development/production environment initialization.
+- Optional adapter/service release, process-suggestion and HTTP capabilities; Flask factories.
+- Frontend npm/pnpm/Yarn pins, frozen asset installs, switching/recovery, on-demand browser tests,
+  explicit public build arguments and temporary BuildKit credentials.
+- Offline canonical schemas in wheel/sdist, schema drift tooling and prepared conformance CI.
+
+### Changed
+
+- `DB_DATABASE`/`DB_USERNAME` align with PHP; Redis-compatible providers share connection settings.
+- Production uses the explicit stable project name instead of appending `-production`.
+- PostgreSQL follows the PHP 18 image family and its data mount layout.
+- Declared processes run in production only; Celery Beat must be selected explicitly.
+- uv development dependencies remain available in development and are pruned for production.
+- Non-interactive init never invokes a uv installer prompt; doctor does not rewrite Compose.
+
+Existing data and projects need the migration review in [docs/parity-report.md](docs/parity-report.md).
+All implementation commits and verification in this pass are local; no push/publication occurred.
+
 ## [0.1.0] - 2026-11-16
 
 The first public release.

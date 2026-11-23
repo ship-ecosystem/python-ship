@@ -11,7 +11,7 @@ from .config import ConfigError
 
 IGNORES = (
     ".venv", "venv", "node_modules", "__pycache__", ".pytest_cache",
-    ".mypy_cache", ".ruff_cache", ".tox", "dist", "build",
+    ".mypy_cache", ".ruff_cache", ".tox", "dist", "build", ".ship-secrets", ".npmrc", "auth.json",
     "*.egg-info", ".env", ".env.*", "ship/docker-compose.*.yml", "dist/ship",
 )
 

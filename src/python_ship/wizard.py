@@ -15,6 +15,7 @@ class Wizard:
         self.rich = rich
         self.answers: list[tuple[str, str, Any]] = []
         self.cursor = 0
+        self.defaults: dict[tuple[str, str], Any] = {}
 
     def rewind(self) -> None:
         self.answers = self.answers[:max(0, self.cursor - 1)]
@@ -53,6 +54,7 @@ class Wizard:
             value = typer.prompt(label + " (:back returns to the previous question)", default=default or "")
             if value == ":back":
                 raise Back()
+        self.defaults[(kind, label)] = value
         self.answers.append((kind, label, value))
         self.cursor += 1
         return value

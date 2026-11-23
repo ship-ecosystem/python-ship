@@ -19,7 +19,7 @@ def answers(prompts, confirms=()):
     def ask(label, *args, **kwargs):
         if label.startswith("Project name") or label.startswith("External networks"):
             return kwargs.get("default", "")
-        if label == "Select a real-time server":
+        if label.startswith("Select a real-time server"):
             return "none"
         return prompts.pop(0)
     def confirm(label, *args, **kwargs):

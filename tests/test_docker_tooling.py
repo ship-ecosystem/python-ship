@@ -68,3 +68,14 @@ class ToolingDockerTests(DockerProjectTestCase):
         with captured() as output:
             code = self.ship("test", "--", "--browser", "electron", "--spec", "probe.cy.js")
         self.assertEqual(0, code, output.stderr + output.stdout[-3000:])
+
+    def test_uv_lock_prunes_dev_dependencies_and_retains_the_server(self):
+        (self.root / "pyproject.toml").write_text('[project]\nname="ship-locked"\nversion="1.0.0"\nrequires-python=">=3.13"\ndependencies=[]\n[dependency-groups]\ndev=["idna==3.11"]\n')
+        self.assertEqual(0, self.init())
+        with captured() as output:
+            self.assertEqual(0, self.ship("uv", "lock"), output.stderr)
+            self.assertEqual(0, self.ship("build"), output.stderr)
+        image = self.model(production=True)["services"]["app"]["image"]
+        check = "import importlib.util; assert importlib.util.find_spec('idna') is None; import uvicorn"
+        result = subprocess.run(["docker", "run", "--rm", image, "python", "-c", check], capture_output=True, text=True)
+        self.assertEqual(0, result.returncode, result.stderr)

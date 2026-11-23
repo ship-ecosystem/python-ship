@@ -266,7 +266,7 @@ def create_app(adapter_commands: dict[str, list[str]] | None = None) -> typer.Ty
                         "storage": storage, "search": search,
                         "mail": mail, "testing": testing, "frontend": frontend},
             silo_image=silo_image, node_assets=node_assets, force=force,
-            interactive=not no_interaction and interactive_terminal(),
+            interactive=not no_interaction and not os.environ.get("CI"),
         )
         return execute(lambda: run_init(root(), options))
 

@@ -420,7 +420,7 @@ def _vite_reminder(root: Path, config: ShipConfig) -> str | None:
 
 def run_init(root: Path, options: InitOptions) -> int:
     # Redirected streams retain the simple prompt implementation, useful for scripts/tests.
-    if not options.interactive or not interactive_terminal():
+    if not options.interactive:
         return _run_init(root, options)
     session = wizard.terminal_wizard()
     token = wizard.active.set(session)

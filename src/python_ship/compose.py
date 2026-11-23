@@ -282,6 +282,8 @@ def build_compose(config: ShipConfig, project_root: Path, *, production: bool = 
             raise ConfigError(f"Adapter {config.framework!r} app_environment() must return a dict of strings.")
         app["environment"].update(adapter_environment)
 
+    if not production:
+        app["environment"].update({key: value.replace("$", "$$") for key, value in config.build.get("publicEnv", {}).items()})
     services: dict[str, Any] = {app_name: app}
     compose: dict[str, Any] = {"name": name, "services": services}
     secret_definitions = {f"ship_build_{key}": {"file": str(project_root / ".ship-secrets" / key)}

@@ -18,6 +18,8 @@ class BuildEnvironmentTests(ProjectTestCase):
         model = self.model(config, production=True)
         self.assertEqual("https://example.test/$$literal", model["services"]["app"]["build"]["args"]["VITE_API_URL"])
         self.assertNotIn("UV_INDEX_TOKEN", model["services"]["app"]["environment"])
+        development = self.model(config)
+        self.assertEqual("https://example.test/$$literal", development["services"]["app"]["environment"]["VITE_API_URL"])
         exported = release_model(model)
         self.assertNotIn("secrets", exported)
         self.assertNotIn("build", exported["services"]["app"])

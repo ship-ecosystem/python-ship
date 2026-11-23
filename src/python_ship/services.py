@@ -337,7 +337,8 @@ class NodeService:
     def compose_fragment(self, context: ServiceContext) -> dict[str, dict[str, Any]]:
         if context.production:
             return {}
-        environment = {"VITE_PORT": "${VITE_PORT:-5173}"}
+        environment = {**{key: value.replace("$", "$$") for key, value in context.config.build.get("publicEnv", {}).items()},
+                       "VITE_PORT": "${VITE_PORT:-5173}"}
         if context.config.build.get("npmrc"):
             environment["NPM_CONFIG_USERCONFIG"] = "/run/secrets/ship_npmrc"
         if sys.platform == "win32" and not mutagen_enabled():

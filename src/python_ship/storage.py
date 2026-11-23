@@ -77,7 +77,10 @@ class SeaweedFSService:
 
     def compose_fragment(self, context: ServiceContext) -> dict[str, dict[str, Any]]:
         return {context.service_name: {
-            "image": "chrislusf/seaweedfs:4.47",
+            "build": {
+                "context": ".",
+                "dockerfile_inline": "FROM ghcr.io/chrislusf/seaweedfs:4.47\nRUN apk upgrade --no-cache\n",
+            },
             "entrypoint": ["/bin/sh", "-c"],
             "command": [_SEAWEED_IDENTITY],
             "environment": {

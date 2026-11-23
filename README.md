@@ -237,14 +237,14 @@ Built-in images use reviewed tags or digests; release registry references are pi
 | Mailpit | `axllent/mailpit:v1.34.0` |
 | Meilisearch | `getmeili/meilisearch:v1.57.0` |
 | Garage | `dxflrs/garage:v2.5.0` (built from `ship/garage/`) |
-| SeaweedFS | `chrislusf/seaweedfs:4.47` |
+| SeaweedFS | `ghcr.io/chrislusf/seaweedfs:4.47` |
 | RustFS | `rustfs/rustfs:1.0.6` |
 | Silo | `pgsty/silo:RELEASE.2026-11-12T00-00-00Z` |
 | Selenium | `selenium/standalone-chromium:4.53.0-20261120` |
 | Playwright | `mcr.microsoft.com/playwright:v1.65.1-noble` |
 | Node.js | Reviewed digest-pinned Node 22/24/26 image (`node` field) |
 
-Ship rebuilds PostgreSQL, MySQL, Typesense and the development-only Cypress image
+Ship rebuilds PostgreSQL, MySQL, Typesense, SeaweedFS and the development-only Cypress image
 with distribution package updates. Portable releases include the rebuilt
 production service images. Run `ship init --force` after reviewing local template
 edits to pick up the updated Python runtime Dockerfile.

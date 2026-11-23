@@ -31,7 +31,8 @@ class PortableCatalogTests(ProjectTestCase):
             self.assertTrue(database["volumes"][0].startswith(key + "-analytics_data:"))
             env = model["services"]["app"]["environment"]
             self.assertEqual("reports", env.get("ANALYTICS_DB_HOST", env.get("ANALYTICS_MONGODB_HOST")))
-            self.assertNotIn("ROOT_PASSWORD", str(env.keys()))
+            admin_setting = "MONGODB_ROOT_PASSWORD" if key == "mongodb" else "DB_ROOT_PASSWORD"
+            self.assertEqual("", env[f"ANALYTICS_{admin_setting}"])
             self.assertIn("ANALYTICS_", str(database["environment"]))
             service = BUILTIN_SERVICES[key]
             context = ServiceContext(ShipEnvironment.PRODUCTION, config, self.root, key, "analytics", "reports")

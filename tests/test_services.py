@@ -41,7 +41,7 @@ class CatalogTests(ProjectTestCase):
                 service, context = self.context(key, config=ShipConfig(app="main:app", services={"cache": "redis"}))
                 image = service.compose_fragment(context)[key].get("image")
                 if image is None:
-                    self.assertIn(key, ("garage", "celery"))  # Built locally, or the app's own image.
+                    self.assertIn(key, ("garage", "celery", "node"))  # Built locally, or the app's own image.
                     continue
                 tag = image.rsplit(":", 1)[1]
                 self.assertNotIn(tag, {"latest", ""})

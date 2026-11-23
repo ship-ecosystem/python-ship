@@ -8,6 +8,7 @@ from pathlib import Path
 
 from . import __version__
 from .config import ShipConfig
+from .package_managers import LOCKFILES, asset_stage, inspect_manager, node_dockerfile
 from .uv import UV_VERSION
 
 FLOOR_SCRIPT = "check-python-security-floor.py"
@@ -25,11 +26,11 @@ def _template(*parts: str) -> str:
     return files("python_ship").joinpath("templates", *parts).read_text(encoding="utf-8")
 
 
-def render_dockerfile(config: ShipConfig) -> str:
+def render_dockerfile(config: ShipConfig, root: Path | None = None) -> str:
     return (
         _template("Dockerfile")
         .replace("@UV_VERSION@", UV_VERSION)
-        .replace("@ASSET_STAGE@", ASSET_STAGE if config.node_assets else "")
+        .replace("@ASSET_STAGE@", asset_stage(root or Path.cwd(), config.node) if config.node_assets else "")
         .replace("@ASSET_COPY@", ASSET_COPY if config.node_assets else "")
     )
 
@@ -51,8 +52,14 @@ def publish_stubs(root: Path, config: ShipConfig, *, force: bool) -> bool:
     dockerfile = ship / "Dockerfile"
     published = force or not dockerfile.exists()
     if published:
-        dockerfile.write_text(render_dockerfile(config), encoding="utf-8", newline="\n")
+        dockerfile.write_text(render_dockerfile(config, root), encoding="utf-8", newline="\n")
         (ship / ".ship-version").write_text(__version__ + "\n", encoding="utf-8")
+    if config.services.get("frontend") == "node":
+        node = ship / "node"
+        node.mkdir(exist_ok=True)
+        path = node / "Dockerfile"
+        if force or not path.exists():
+            path.write_text(node_dockerfile(root, config.node), encoding="utf-8", newline="\n")
     (ship / FLOOR_SCRIPT).write_text(_template(FLOOR_SCRIPT), encoding="utf-8", newline="\n")
     (ship / "app-entrypoint.py").write_text(_template("app-entrypoint.py"), encoding="utf-8", newline="\n")
     if uses_garage(config):
@@ -145,6 +152,11 @@ def asset_problems(root: Path, config: ShipConfig) -> list[str]:
                 problems.append("nodeAssets requires a \"build\" script in package.json.")
         except (OSError, ValueError):
             problems.append("nodeAssets requires a valid package.json.")
-    if not (root / "package-lock.json").is_file():
-        problems.append("nodeAssets requires package-lock.json, for a reproducible `npm ci`.")
+    try:
+        manager = inspect_manager(root)
+        lock = LOCKFILES[manager.name]
+        if not (root / lock).is_file():
+            problems.append(f"nodeAssets requires {lock} for a reproducible build.")
+    except ValueError as exc:
+        problems.append(str(exc))
     return problems

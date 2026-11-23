@@ -338,7 +338,7 @@ class NodeService:
             # so Vite's watcher (chokidar) polls; under Mutagen the files are local and events work.
             environment["CHOKIDAR_USEPOLLING"] = "true"
         return {context.service_name: {
-            "image": "node:24.18.0-alpine3.24",
+            "build": {"context": ".", "dockerfile": "ship/node/Dockerfile"},
             "init": True,
             "working_dir": "/app",
             "volumes": [".:/app", "node_modules:/app/node_modules"],

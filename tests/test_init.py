@@ -148,6 +148,8 @@ class RerunTests(ProjectTestCase):
         self.assertIn("cannot install the selected web server", self.init_output.stderr)
         self.assertEqual(1, self.init("--node-assets"))
         self.assertIn("nodeAssets requires a refreshed", self.init_output.stderr)
+        (self.root / "package.json").write_text('{"scripts":{"build":"vite build"}}')
+        (self.root / "package-lock.json").write_text('{}')
         self.assertEqual(0, self.init("--server", "hypercorn", "--node-assets", "--force"))
         dockerfile = (self.root / "ship" / "Dockerfile").read_text()
         self.assertIn("AS assets", dockerfile)

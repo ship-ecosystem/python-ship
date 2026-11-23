@@ -43,13 +43,13 @@ GROUPS_SUPPORTING_ADDITIONAL_INSTANCES = ("database", "cache", "storage", "searc
 # Ship's own commands; a process or a framework console command can't take these names.
 RESERVED_COMMANDS = frozenset({
     "init", "up", "down", "exec", "shell", "logs", "db", "config:test", "build", "release",
-    "npm", "uv", "doctor",
+    "npm", "pnpm", "yarn", "package-manager", "test", "uv", "doctor",
 })
 
 FIELDS = (
     "$schema", "framework", "app", "python", "server", "services", "additionalServices", "serviceNames",
     "externalNetwork", "extensions", "name", "siloImage", "publishPorts", "hostUser",
-    "processes", "deployCommands", "nodeAssets", "djangoCollectstatic",
+    "processes", "deployCommands", "nodeAssets", "djangoCollectstatic", "node",
 )
 
 Command = str | list[str]
@@ -81,6 +81,7 @@ class ShipConfig:
     app: str = "main:app"
     python: str = DEFAULT_PYTHON
     server: str | None = None
+    node: str = "24"
     services: dict[str, str] = field(default_factory=dict)
     additional_services: list[AdditionalService] = field(default_factory=list)
     service_names: dict[str, str] = field(default_factory=dict)
@@ -167,6 +168,9 @@ class ShipConfig:
         if server is not None and (not isinstance(server, str) or not SERVICE_NAME.fullmatch(server)):
             problems.append("ship.json \"server\" must be a web server key such as \"uvicorn\" or \"gunicorn\".")
 
+        node = data.get("node", "24")
+        if node not in ("22", "24", "26"):
+            problems.append('ship.json "node" must select a supported branch: 22, 24 or 26.')
         services = data.get("services", {})
         if not isinstance(services, dict) or any(
             not isinstance(group, str) or not isinstance(key, str) or not key for group, key in services.items()
@@ -282,6 +286,7 @@ class ShipConfig:
             app=str(app),
             python=python,
             server=server,
+            node=node,
             services={group: canonical_service(key) for group, key in services.items()},
             additional_services=additional,
             service_names={canonical_service(old): new for old, new in service_names.items()},
@@ -304,6 +309,7 @@ class ShipConfig:
             "app": self.app,
             "python": self.python,
         }
+        payload["node"] = self.node
         if self.server is not None:
             payload["server"] = self.server
         payload["services"] = dict(self.services)
@@ -343,7 +349,7 @@ _ATTRIBUTES = {
     "extensions": "extensions", "name": "name", "siloImage": "silo_image",
     "publishPorts": "publish_ports", "hostUser": "host_user", "processes": "processes",
     "deployCommands": "deploy_commands", "nodeAssets": "node_assets",
-    "djangoCollectstatic": "django_collectstatic",
+    "djangoCollectstatic": "django_collectstatic", "node": "node",
 }
 
 

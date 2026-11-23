@@ -44,7 +44,7 @@ class ShipConfigTests(ProjectTestCase):
 
     def test_defaults_are_omitted_from_the_written_file(self):
         ShipConfig(app="main:app").write(self.root)
-        self.assertEqual({"$schema", "framework", "app", "python", "services", "extensions"},
+        self.assertEqual({"$schema", "framework", "app", "python", "node", "services", "extensions"},
                          set(json.loads((self.root / "ship.json").read_text())))
 
     def test_reports_every_independent_problem_in_one_pass(self):

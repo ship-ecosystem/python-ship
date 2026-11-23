@@ -36,6 +36,7 @@ from .init import InitOptions, ensure_dockerignore, ensure_gitignore, interactiv
 from .mutagen import enabled as mutagen_enabled
 from .mutagen import start as start_mutagen
 from .mutagen import stop as stop_mutagen
+from .package_managers import inspect_manager, switch_manager
 from .plugins import Registry, console_commands, load_extensions
 from .production import credential_problems, read_env
 from .release import TAG_PATTERN, assemble_release, destination_for, plan_images, source_metadata
@@ -238,6 +239,7 @@ def create_app(adapter_commands: dict[str, list[str]] | None = None) -> typer.Ty
         app_target: Annotated[str | None, typer.Option("--app", help="App import target, such as main:app.")] = None,
         framework: Annotated[str | None, typer.Option(help="Framework adapter: generic, django, fastapi, flask, or an extension.")] = None,
         server: Annotated[str | None, typer.Option(help="Web server: uvicorn, hypercorn, granian (ASGI); gunicorn, granian (WSGI); or an extension. Defaults to the one recommended for the app.")] = None,
+        node_version: Annotated[str | None, typer.Option("--node", help="Frontend Node branch: 22, 24 or 26.")] = None,
         python_version: Annotated[str | None, typer.Option("--python", help="Python branch for the image, such as 3.13.")] = None,
         database: Annotated[str | None, typer.Option(help="Database service, or none.")] = None,
         cache: Annotated[str | None, typer.Option(help="Cache service, or none.")] = None,
@@ -255,7 +257,7 @@ def create_app(adapter_commands: dict[str, list[str]] | None = None) -> typer.Ty
     ) -> int:
         """Pick services, write ship.json and publish the ship/ directory."""
         options = InitOptions(
-            name=name, additional=additional_service, remove_instances=remove_instance, process_options=process,
+            name=name, node=node_version, additional=additional_service, remove_instances=remove_instance, process_options=process,
             remove_processes=remove_process, networks=network, clear_networks=no_network, deploy=deploy_command,
             app=app_target, framework=framework, server=server, python=python_version,
             selections={"broadcasting": broadcasting, "database": database, "cache": cache, "broker": broker, "tasks": tasks,
@@ -386,18 +388,68 @@ def create_app(adapter_commands: dict[str, list[str]] | None = None) -> typer.Ty
         """Report versions, stub freshness and the state and health of every container."""
         return execute(doctor)
 
+    def frontend_proxy(tool: str) -> int:
+        project = root()
+        config = read_config(project)
+        registry = load_extensions(config)
+        nodes = [item for item in resolve_selections(config, registry) if item.service.key == "node"]
+        if len(nodes) != 1:
+            fail(f"ship {tool} requires the Node frontend service; select it with ship init --frontend node.")
+        manager = inspect_manager(project)
+        if manager.name != tool:
+            fail(f"This project uses {manager.name}; use ship {manager.name} or ship package-manager.")
+        return run(compose_prefix(project, config) + ["exec", *tty_flags(), nodes[0].service_name, tool, *proxy_tail(tool, 1)], project)
+
     @app.command("npm", context_settings=PROXY_CONTEXT)
     def npm_command(ctx: typer.Context) -> int:
-        """Run npm in the Node frontend service; arguments pass through."""
+        return execute(lambda: frontend_proxy("npm"))
+
+    @app.command("pnpm", context_settings=PROXY_CONTEXT)
+    def pnpm_command(ctx: typer.Context) -> int:
+        return execute(lambda: frontend_proxy("pnpm"))
+
+    @app.command("yarn", context_settings=PROXY_CONTEXT)
+    def yarn_command(ctx: typer.Context) -> int:
+        return execute(lambda: frontend_proxy("yarn"))
+
+    @app.command("package-manager")
+    def package_manager_command(
+        tool: Annotated[str, typer.Argument(help="npm, pnpm or yarn, optionally @EXACT_VERSION.")],
+        yes: Annotated[bool, typer.Option("--yes", "-y", help="Confirm lockfile and dependency replacement.")] = False,
+    ) -> int:
+        def action() -> int:
+            project = root()
+            config = read_config(project)
+            if config.services.get("frontend") != "node":
+                fail("Select the Node frontend service before switching package managers.")
+            if not yes and (not interactive_terminal() or not typer.confirm("Replace frontend lockfiles and reinstall dependencies?", default=False)):
+                fail("Switch cancelled; pass --yes to confirm in automation.")
+            prefix = compose_prefix(project, config)
+            node = config.service_names.get("node", "node")
+            switch_manager(project, tool, lambda argv: run(prefix + ["exec", "-T", node, *argv], project))
+            # Only the generated frontend image changes; preserve the application Dockerfile.
+            from .package_managers import node_dockerfile
+            (project / "ship/node/Dockerfile").write_text(node_dockerfile(project, config.node))
+            typer.echo("Package manager updated. Review the lockfile, then ship up to rebuild the frontend container.")
+            return 0
+        return execute(action)
+
+    @app.command("test", context_settings=PROXY_CONTEXT)
+    def test_command(ctx: typer.Context) -> int:
         def action() -> int:
             project = root()
             config = read_config(project)
             registry = load_extensions(config)
-            nodes = [item for item in resolve_selections(config, registry) if item.service.key == "node"]
-            if len(nodes) != 1:
-                fail("ship npm requires the Node frontend service; select it with `ship init --frontend node`.")
+            selected = next((item for item in resolve_selections(config, registry) if item.group == "testing" and item.instance_name is None), None)
+            if selected is None:
+                fail("Select a browser testing service first.")
+            arguments = proxy_tail("test", 1)
+            if arguments[:1] == ["--"]:
+                arguments = arguments[1:]
             prefix = compose_prefix(project, config)
-            return run(prefix + ["exec", *tty_flags(), nodes[0].service_name, "npm", *proxy_tail("npm", 1)], project)
+            if selected.service.key == "cypress":
+                return run(prefix + ["run", "--rm", "--no-deps", *tty_flags(), selected.service_name, "--", *arguments], project)
+            return run(prefix + ["exec", *tty_flags(), config.app_service, "python", "-m", "pytest", *arguments], project)
         return execute(action)
 
     @app.command("uv", context_settings=PROXY_CONTEXT)

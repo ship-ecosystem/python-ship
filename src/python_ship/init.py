@@ -82,6 +82,7 @@ export default defineConfig({
 
 @dataclass
 class InitOptions:
+    node: str | None = None
     name: str | None = None
     additional: list[str] | None = None
     remove_instances: list[str] | None = None
@@ -344,6 +345,7 @@ def resolve_config(root: Path, options: InitOptions) -> ShipConfig:
     result = replace(
         base,
         name=name,
+        node=options.node or base.node,
         processes=processes,
         external_network=networks,
         deploy_commands=list(options.deploy) if options.deploy is not None else base.deploy_commands,

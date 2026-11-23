@@ -184,7 +184,7 @@ class AdapterCommandRegistrationTests(ProjectTestCase):
         ShipConfig("generic", "main:app").write(self.root)
         with captured() as output:
             self.assertEqual(0, self.ship("--help"))
-        self.assertNotIn("manage", output.stdout)
+        self.assertNotRegex(output.stdout, r"(?m)^  manage\s")
 
     def test_unreadable_config_registers_nothing_and_does_not_crash(self):
         (self.root / "ship.json").write_text("{broken")

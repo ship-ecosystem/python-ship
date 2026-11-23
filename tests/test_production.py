@@ -123,7 +123,7 @@ class StubCheckTests(ProjectTestCase):
         self.assertIn("ship/garage/Dockerfile is missing", stub_problems(self.root, config)[0])
         assets = ShipConfig(app="main:app", node_assets=True)
         self.assertEqual(["nodeAssets requires package.json with a build script.",
-                          "nodeAssets requires package-lock.json, for a reproducible `npm ci`."], asset_problems(self.root, assets))
+                          "nodeAssets requires package-lock.json for a reproducible build."], asset_problems(self.root, assets))
         (self.root / "package.json").write_text("{bad")
         self.assertIn("valid package.json", asset_problems(self.root, assets)[0])
         (self.root / "package.json").write_text(json.dumps({"scripts": {"dev": "vite"}}))
@@ -134,16 +134,21 @@ class StubCheckTests(ProjectTestCase):
         self.assertEqual([], asset_problems(self.root, ShipConfig(app="main:app")))
 
     def test_config_test_reports_asset_problems(self):
+        (self.root / "package.json").write_text('{"scripts":{"build":"vite build"}}')
+        (self.root / "package-lock.json").write_text('{}')
         self.assertEqual(0, self.init("--app", "main:app", "--node-assets"))
+        (self.root / "package.json").unlink()
         with captured() as output:
             self.assertEqual(1, self.ship("config:test"))
         self.assertIn("package.json", output.stderr)
 
     def test_node_assets_stage_is_rendered(self):
+        (self.root / "package.json").write_text('{"scripts":{"build":"vite build"}}')
+        (self.root / "package-lock.json").write_text('{}')
         with patch("python_ship.stubs.UV_VERSION", "9.9.9"):
             self.assertEqual(0, self.init("--app", "main:app", "--node-assets"))
         dockerfile = (self.root / "ship" / "Dockerfile").read_text()
-        self.assertIn("FROM node:24.18.0-alpine3.24 AS assets", dockerfile)
+        self.assertIn("FROM node:24.22.3-bookworm-slim@sha256:", dockerfile)
         self.assertIn("ghcr.io/astral-sh/uv:9.9.9", dockerfile)
         self.assertLess(dockerfile.index("AS assets"), dockerfile.index("AS base"))
 

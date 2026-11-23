@@ -11,7 +11,7 @@ import sys
 import typer
 
 from . import __version__
-from .compose import app_interface, build_compose
+from .compose import app_interface, build_compose, project_name
 from .config import (
     GROUPS_SUPPORTING_ADDITIONAL_INSTANCES,
     INSTANCE_NAME,
@@ -274,6 +274,7 @@ def resolve_config(root: Path, options: InitOptions) -> ShipConfig:
 
     return replace(
         base,
+        name=base.name or project_name(base, root),
         framework=framework,
         app=app,
         server=server,

@@ -36,7 +36,8 @@ from .mutagen import start as start_mutagen
 from .mutagen import stop as stop_mutagen
 from .plugins import Registry, console_commands, load_extensions
 from .production import credential_problems, read_env
-from .release import TAG_PATTERN, assemble_release, plan_images
+from .capabilities import release_description, required_setting_problems
+from .release import TAG_PATTERN, assemble_release, destination_for, plan_images, source_metadata
 from .runtime import records, status, wait_for_stack
 from .stubs import asset_problems, production_stub_problem, published_version, stub_problems, stub_version_warning
 from .uv import UV_VERSION
@@ -158,6 +159,7 @@ def config_problems(project: Path, *, production: bool = True) -> list[str]:
                 continue
             if model_production:
                 problems.extend(credential_problems(model, project))
+                problems.extend(required_setting_problems(release_description(registry.adapter(config), config, project), project))
     problems.extend(asset_problems(project, config))
     return list(dict.fromkeys(problems))
 
@@ -171,6 +173,7 @@ def build_production(project: Path, config: ShipConfig, tag: str) -> tuple[dict[
     problems = stub_problems(project, config)
     model = build_compose(config, project, production=True)
     problems += credential_problems(model, project) + asset_problems(project, config)
+    problems += required_setting_problems(release_description(load_extensions(config).adapter(config), config, project), project)
     if problems:
         fail(" ".join(problems))
     require_docker()
@@ -338,7 +341,11 @@ def create_app(adapter_commands: dict[str, list[str]] | None = None) -> typer.Ty
         return execute(action)
 
     @app.command("release")
-    def release_command(tag: Annotated[str | None, typer.Option("--tag", help="Release tag, such as 1.2.0.")] = None) -> int:
+    def release_command(
+        tag: Annotated[str | None, typer.Option("--tag", help="Release tag, such as 1.2.0.")] = None,
+        force: Annotated[bool, typer.Option("--force", help="Explicitly replace an existing release.")] = False,
+        no_env: Annotated[bool, typer.Option("--no-env", help="Leave production settings out of the artifact.")] = False,
+    ) -> int:
         """Build the production images and assemble the portable release in dist/ship/<tag>/."""
         def action() -> int:
             chosen = tag
@@ -350,10 +357,12 @@ def create_app(adapter_commands: dict[str, list[str]] | None = None) -> typer.Ty
                 fail("Invalid release tag; use letters, digits, _, . or -, starting with a letter, digit or _.")
             project = root()
             config = read_config(project)
-            if not (project / ".env.production").is_file():
-                fail("ship release requires .env.production, even when no selected service needs credentials.")
+            destination_for(project, chosen, force)
+            if not config.name:
+                fail("Release requires an explicit stable name in ship.json; run ship init --name NAME.")
+            source = source_metadata(project)
             model, _ = build_production(project, config, chosen)
-            destination = assemble_release(project, config, model, chosen)
+            destination = assemble_release(project, config, model, chosen, force=force, no_env=no_env, source=source)
             typer.echo(f"Release ready at {destination}")
             return 0
         return execute(action)

@@ -23,7 +23,7 @@ _REQUIRED = {
     "service": ("compose_fragment", "app_environment"),
     "server": ("development_command", "production_command"),
 }
-_OPTIONAL = {"adapter": ("app_environment",), "service": ("database_shell", "validate"), "server": ()}
+_OPTIONAL = {"adapter": ("app_environment", "describe_release", "suggest_processes"), "service": ("database_shell", "validate", "http_endpoints"), "server": ()}
 
 
 @dataclass

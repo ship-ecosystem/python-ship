@@ -17,6 +17,11 @@ from tests.helpers import ProjectTestCase, captured, fake_docker
 def fake_release_docker(command, **kwargs):
     if command[:2] == ["docker", "save"]:
         Path(command[command.index("-o") + 1]).write_bytes(command[-1].encode())
+    if command[:3] == ["docker", "image", "inspect"]:
+        image = command[-1]
+        repository = image.split("@")[0].rsplit(":", 1)[0]
+        return subprocess.CompletedProcess(command, 0, json.dumps([{"Id": "sha256:" + "a" * 64,
+            "Os": "linux", "Architecture": "amd64", "RepoDigests": [repository + "@sha256:" + "b" * 64]}]), "")
     if command[:2] == ["git", "rev-parse"]:
         return subprocess.CompletedProcess(command, 0, "a" * 40 + "\n", "")
     return subprocess.CompletedProcess(command, 0, "", "")
@@ -31,10 +36,10 @@ class PlanTests(ProjectTestCase):
         self.assertEqual({"app", "garage"}, set(owners))
         self.assertEqual(["app", "jobs", "worker"], owners["app"]["services"])
         tag = owners["app"]["image"]
-        self.assertTrue(tag.endswith("-production-app:v1"))
+        self.assertTrue(tag.endswith("-app:v1"))
         for name in ("app", "jobs", "worker"):
             self.assertEqual(tag, planned["services"][name]["image"])
-        self.assertTrue(owners["garage"]["image"].endswith("-production-garage:v1"))
+        self.assertTrue(owners["garage"]["image"].endswith("-garage:v1"))
 
     def test_renamed_app_still_owns_its_image(self):
         model = self.model(ShipConfig(app="main:app", service_names={"app": "web"}, processes={"a-worker": "x"}), production=True)
@@ -45,7 +50,7 @@ class PlanTests(ProjectTestCase):
         release = release_model(self.model(ShipConfig(app="main:app"), production=True))
         app = release["services"]["app"]
         self.assertNotIn("build", app)
-        self.assertEqual([{"path": ".env", "required": True}], app["env_file"])
+        self.assertEqual([{"path": ".env", "required": False}], app["env_file"])
 
 
 class DeployScriptTests(ProjectTestCase):
@@ -58,9 +63,9 @@ class DeployScriptTests(ProjectTestCase):
         self.assertEqual("#!/bin/sh", lines[0])
         self.assertIn("set -eu", lines)
         self.assertIn("docker compose up -d --wait postgres redis", lines)
-        self.assertIn("docker compose run --rm --no-deps app sh -c 'python manage.py migrate --noinput && echo $DONE'", lines)
-        self.assertIn("docker compose run --rm --no-deps app python seed.py 'a b'", lines)
-        self.assertLess(lines.index("docker compose up -d --wait postgres redis"), lines.index("docker compose run --rm --no-deps app python seed.py 'a b'"))
+        self.assertIn("docker compose run --rm --no-deps -T app sh -c 'python manage.py migrate --noinput && echo $DONE'", lines)
+        self.assertIn("docker compose run --rm --no-deps -T app python seed.py 'a b'", lines)
+        self.assertLess(lines.index("docker compose up -d --wait postgres redis"), lines.index("docker compose run --rm --no-deps -T app python seed.py 'a b'"))
         self.assertNotIn("worker", script)
 
     @unittest.skipUnless(os.name != "nt" and shutil.which("sh"), "needs a POSIX shell")
@@ -86,7 +91,7 @@ class AssembleTests(ProjectTestCase):
         self.assertEqual(0, self.init("--app", "main:app"))
 
     def test_artifact_layout_contents_and_permissions(self):
-        config = self.write_config(app="main:app", services={"cache": "redis"}, deploy_commands=["python migrate.py"])
+        config = self.write_config(app="main:app", name="fixture", services={"cache": "redis"}, deploy_commands=["python migrate.py"])
         (self.root / ".env.production").write_text("PRIVATE_TOKEN=top-secret-value\n")
         model, _ = plan_images(self.model(config, production=True), "v1")
         with patch("python_ship.release.subprocess.run", side_effect=fake_release_docker):
@@ -99,9 +104,10 @@ class AssembleTests(ProjectTestCase):
         self.assertEqual("PRIVATE_TOKEN=top-secret-value\n", (path / ".env").read_text())
         manifest = json.loads((path / "release.json").read_text())
         self.assertEqual("v1", manifest["tag"])
-        self.assertEqual({"package": "python-ship", "version": manifest["ship"]["version"]}, manifest["ship"])
-        self.assertEqual("a" * 40, manifest["git_commit"])
-        self.assertEqual({"images/app.tar", "images/redis.tar"}, {image["file"] for image in manifest["images"]})
+        self.assertEqual("python-ship", manifest["builder"]["package"])
+        self.assertEqual("ship-release", manifest["format"])
+        self.assertEqual("a" * 40, manifest["source"]["gitCommit"])
+        self.assertEqual({"images/app.tar"}, {image["file"] for image in manifest["images"]})
         self.assertTrue(all(len(image["sha256"]) == 64 for image in manifest["images"]))
         self.assertNotIn("top-secret-value", (path / "release.json").read_text())
         readme = (path / "README.md").read_text()
@@ -110,10 +116,10 @@ class AssembleTests(ProjectTestCase):
         if os.name != "nt":
             self.assertEqual(0o700, path.stat().st_mode & 0o777)
             self.assertEqual(0o600, (path / ".env").stat().st_mode & 0o777)
-            self.assertEqual(0o700, (path / "deploy-commands.sh").stat().st_mode & 0o777)
+            self.assertEqual(0o755, (path / "deploy-commands.sh").stat().st_mode & 0o777)
 
     def test_missing_images_are_pulled_and_rebuilt_releases_replace_old_ones(self):
-        config = self.write_config(app="main:app", services={"cache": "redis"})
+        config = self.write_config(app="main:app", name="fixture", services={"cache": "redis"})
         (self.root / ".env.production").write_text("X=1\n")
         old = self.root / "dist" / "ship" / "v1"
         old.mkdir(parents=True)
@@ -123,12 +129,12 @@ class AssembleTests(ProjectTestCase):
         def run(command, **kwargs):
             calls.append(command)
             if command[:3] == ["docker", "image", "inspect"]:
-                return subprocess.CompletedProcess(command, 1, "", "")
+                return fake_release_docker(command, **kwargs)
             return fake_release_docker(command, **kwargs)
 
         model, _ = plan_images(self.model(config, production=True), "v1")
         with patch("python_ship.release.subprocess.run", side_effect=run):
-            path = assemble_release(self.root, config, model, "v1")
+            path = assemble_release(self.root, config, model, "v1", force=True)
         self.assertFalse((path / "stale.txt").exists())
         self.assertIn(["docker", "pull", "redis:8.10.3-alpine3.23"], calls)
 
@@ -141,11 +147,11 @@ class AssembleTests(ProjectTestCase):
 
         def run(command, **kwargs):
             failed = command[:2] == ["docker", "save"]
-            return subprocess.CompletedProcess(command, 1 if failed else 0, "", "save failed" if failed else "")
+            return subprocess.CompletedProcess(command, 1, "", "save failed") if failed else fake_release_docker(command, **kwargs)
 
         model, _ = plan_images(self.model(config, production=True), "v1")
         with patch("python_ship.release.subprocess.run", side_effect=run), self.assertRaisesRegex(ConfigError, "save failed"):
-            assemble_release(self.root, config, model, "v1")
+            assemble_release(self.root, config, model, "v1", force=True)
         self.assertEqual("old release", (old / "keep.txt").read_text())
         self.assertEqual([], list((self.root / "dist" / "ship").glob(".release-*")))
 
@@ -174,7 +180,7 @@ class ReleaseCommandTests(ProjectTestCase):
         for tag in ("../escape", "-bad", "bad tag", "x" * 129, ""):
             with self.subTest(tag=tag), fake_docker() as docker, captured():
                 self.assertEqual(1, self.ship("release", "--tag", tag))
-            self.assertEqual([], docker.calls)
+            self.assertEqual([], [call for call in docker.calls if call[0][0] == "docker"])
 
     def test_interactive_tag_prompt(self):
         (self.root / ".env.production").write_text("X=1\n")
@@ -184,16 +190,13 @@ class ReleaseCommandTests(ProjectTestCase):
         prompt.assert_called_once()
         self.assertEqual("1.2.0", assemble.call_args.args[3])
 
-    def test_env_production_and_credentials_are_required_before_docker(self):
-        with fake_docker() as docker, captured() as output:
-            self.assertEqual(1, self.ship("release", "--tag", "v1"))
-        self.assertIn("requires .env.production", output.stderr)
-        self.write_config(app="main:app", services={"database": "postgres"})
+    def test_credentials_are_required_before_docker(self):
+        self.write_config(app="main:app", name="fixture", services={"database": "postgres"})
         (self.root / ".env.production").write_text("OTHER=1\n")
         with fake_docker() as docker, captured() as output:
             self.assertEqual(1, self.ship("release", "--tag", "v1"))
         self.assertIn("DB_PASSWORD", output.stderr)
-        self.assertEqual([], docker.calls)
+        self.assertEqual([], [call for call in docker.calls if call[0][0] == "docker"])
 
     def test_release_builds_then_assembles(self):
         (self.root / ".env.production").write_text("X=1\n")

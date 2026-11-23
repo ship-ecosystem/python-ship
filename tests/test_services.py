@@ -1,6 +1,8 @@
 """Every built-in service: fragments, injected variables, dev/production scope and credentials."""
 
+import json
 import os
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 
@@ -35,11 +37,21 @@ class CatalogTests(ProjectTestCase):
                 self.assertTrue(service.label)
         self.assertEqual({"postgres", "mysql", "mariadb", "mongodb", "sqlserver"}, {key for key, item in BUILTIN_SERVICES.items() if isinstance(item, ProvidesDatabaseShell)})
 
+    def test_shared_service_environment_contract(self):
+        contract = json.loads((Path(__file__).resolve().parents[1] / "schema/service-environment.json").read_text())
+        for key, variables in contract.items():
+            with self.subTest(key=key):
+                model = self.model(ShipConfig(app="main:app", services={GROUPS[key]: key}))
+                self.assertLessEqual(set(variables), model["services"]["app"]["environment"].keys())
+
     def test_every_image_is_version_pinned(self):
         for key in BUILTIN_SERVICES:
             with self.subTest(key=key):
                 service, context = self.context(key, config=ShipConfig(app="main:app", services={"cache": "redis"}))
-                image = service.compose_fragment(context)[key].get("image")
+                fragment = service.compose_fragment(context)[key]
+                image = fragment.get("image")
+                if "dockerfile_inline" in fragment.get("build", {}):
+                    image = fragment["build"]["dockerfile_inline"].splitlines()[0].removeprefix("FROM ")
                 if image is None:
                     self.assertIn(key, ("garage", "celery", "node"))  # Built locally, or the app's own image.
                     continue

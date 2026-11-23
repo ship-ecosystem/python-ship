@@ -48,6 +48,6 @@ class PortableCatalogTests(ProjectTestCase):
         model = self.model(ShipConfig(app="main:app", services={"testing": "cypress"}))
         self.assertEqual(["ship-testing"], model["services"]["cypress"]["profiles"])
         renamed = self.model(ShipConfig(app="main:app", services={"testing": "cypress"}, service_names={"cypress": "browser"}))
-        self.assertEqual("cypress/included:16.3.0", renamed["services"]["browser"]["image"])
+        self.assertTrue(renamed["services"]["browser"]["build"]["dockerfile_inline"].startswith("FROM cypress/included:16.3.0\n"))
         self.assertEqual("http://ship-app.test:8000", model["services"]["cypress"]["environment"]["CYPRESS_BASE_URL"])
         self.assertNotIn("cypress", model["services"]["app"].get("depends_on", {}))

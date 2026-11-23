@@ -459,7 +459,7 @@ def create_app(adapter_commands: dict[str, list[str]] | None = None) -> typer.Ty
                 arguments = arguments[1:]
             prefix = compose_prefix(project, config)
             if selected.service.key == "cypress":
-                return run(prefix + ["run", "--rm", "--no-deps", *tty_flags(), "--entrypoint", "sh", selected.service_name,
+                return run(prefix + ["run", "--build", "--rm", "--no-deps", *tty_flags(), "--entrypoint", "sh", selected.service_name,
                     "-c", 'set -eu; mkdir -p /e2e/node_modules; if [ ! -e /e2e/node_modules/cypress ]; then ln -s /usr/local/lib/node_modules/cypress /e2e/node_modules/cypress; fi; exec cypress run "$@"', "ship-cypress", *arguments], project)
             return run(prefix + ["exec", *tty_flags(), config.app_service, *application_argv(config, config.app_service, ["python", "-m", "pytest", *arguments])], project)
         return execute(action)

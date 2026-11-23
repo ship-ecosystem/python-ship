@@ -32,7 +32,10 @@ class PostgresService:
 
     def compose_fragment(self, context: ServiceContext) -> dict[str, dict[str, Any]]:
         return {context.service_name: {
-            "image": "postgres:18.7-alpine",
+            "build": {
+                "context": ".",
+                "dockerfile_inline": "FROM postgres:18.7-alpine\nRUN apk upgrade --no-cache\n",
+            },
             "environment": {
                 "POSTGRES_DB": context.setting("DB_DATABASE", "app"),
                 "POSTGRES_USER": context.setting("DB_USERNAME", "app"),
@@ -72,7 +75,10 @@ class MySqlService:
 
     def compose_fragment(self, context: ServiceContext) -> dict[str, dict[str, Any]]:
         return {context.service_name: {
-            "image": "mysql:9.7.4",
+            "build": {
+                "context": ".",
+                "dockerfile_inline": "FROM mysql:9.7.4\nRUN microdnf --disablerepo='mysql*' -y upgrade && microdnf clean all\n",
+            },
             "environment": {
                 "MYSQL_DATABASE": context.setting("DB_DATABASE", "app"),
                 "MYSQL_USER": context.setting("DB_USERNAME", "app"),
@@ -276,13 +282,13 @@ BROWSER_APP_HOST = "ship-app.test"
 class SeleniumService:
     key = "selenium"
     group = "testing"
-    label = "Selenium (Chrome)"
+    label = "Selenium (Chromium)"
 
     def compose_fragment(self, context: ServiceContext) -> dict[str, dict[str, Any]]:
         if context.production:
             return {}
         return {context.service_name: {
-            "image": "selenium/standalone-chrome:4.53.0-20261120",
+            "image": "selenium/standalone-chromium:4.53.0-20261120",
             "shm_size": "2gb",
             "healthcheck": _healthcheck(
                 ["CMD-SHELL", "/opt/bin/check-grid.sh --host 127.0.0.1 --port 4444"],
@@ -325,6 +331,8 @@ class PlaywrightService:
     def app_environment(self, context: ServiceContext) -> dict[str, str]:
         return {
             "PLAYWRIGHT_WS_URL": f"ws://{context.service_name}:3000/",
+            "PW_TEST_CONNECT_WS_ENDPOINT": f"ws://{context.service_name}:3000/",
+            "PLAYWRIGHT_BASE_URL": f"http://{BROWSER_APP_HOST}:8000",
             "APP_URL": f"http://{BROWSER_APP_HOST}:8000",
         }
 

@@ -12,7 +12,7 @@ from .config import ShipConfig
 from .package_managers import LOCKFILES, asset_stage, inspect_manager, node_dockerfile
 from .uv import UV_VERSION
 
-TEMPLATE_REVISION = "2"
+TEMPLATE_REVISION = "3"
 FLOOR_SCRIPT = "check-python-security-floor.py"
 ASSET_STAGE = """FROM node:24.18.0-alpine3.24 AS assets
 WORKDIR /assets

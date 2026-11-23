@@ -68,7 +68,7 @@ class PortableProviderDockerTests(unittest.TestCase):
                     if key != "centrifugo":
                         json.loads(response.read())
                 elif key == "cypress":
-                    result = run("run", "--rm", "--no-deps", "--entrypoint", "cypress", "provider", "version")
+                    result = run("run", "--build", "--rm", "--no-deps", "--entrypoint", "cypress", "provider", "version")
                     self.assertIn("16.3.0", result.stdout)
             finally:
                 result = run("down", "--volumes", check=False)

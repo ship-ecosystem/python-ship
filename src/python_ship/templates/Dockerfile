@@ -3,6 +3,9 @@
 ARG PYTHON_VERSION=3.13
 @ASSET_STAGE@
 FROM python:${PYTHON_VERSION}-slim AS base
+RUN apt-get update \
+    && apt-get install -y --only-upgrade --no-install-recommends zlib1g \
+    && rm -rf /var/lib/apt/lists/*
 ARG PYTHON_VERSION
 # The first patched release per Python branch, from the generated Compose file. A stale, locally
 # cached base image fails here instead of building on a release with known vulnerabilities.

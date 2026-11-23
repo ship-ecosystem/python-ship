@@ -274,7 +274,7 @@ class DoctorTests(ProjectTestCase):
         ))
         with fake_docker(stdout=healthy), captured() as output:
             self.assertEqual(0, self.ship("doctor"))
-        self.assertIn("postgres: postgres:", output.stdout)
+        self.assertIn("postgres: built from a Dockerfile", output.stdout)
         self.assertIn("http://127.0.0.1:18000", output.stdout)
 
     def test_does_not_require_production_credentials(self):

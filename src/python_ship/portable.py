@@ -37,6 +37,16 @@ class PortableService:
             return {}
         fragment = self._replace(deepcopy(raw), context)
         model = fragment[context.service_name]
+        if self.key in ("typesense", "cypress"):
+            base = model.pop("image")
+            # Keep the browser versions bundled in Cypress's image. Only update Debian packages.
+            sources = (" -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/debian.sources -o Dir::Etc::sourceparts=-"
+                       if self.key == "cypress" else "")
+            model["build"] = {
+                "context": ".",
+                "dockerfile_inline": f"FROM {base}\nRUN apt-get{sources} update && DEBIAN_FRONTEND=noninteractive "
+                                     f"apt-get{sources} upgrade -y && rm -rf /var/lib/apt/lists/*\n",
+            }
         if self.key == "centrifugo":
             cache = context.config.services.get("cache")
             if cache in ("redis", "valkey"):
@@ -58,6 +68,7 @@ class PortableService:
         if self.key == "mongodb":
             variables.pop(context.env_prefix + "MONGODB_URI", None)
             variables.update({context.env_prefix + "MONGODB_HOST": context.service_name,
+                              context.env_prefix + "MONGODB_PORT": "27017",
                               context.env_prefix + "MONGODB_USERNAME": context.setting("MONGODB_USERNAME", "app"),
                               context.env_prefix + "MONGODB_PASSWORD": context.credential("MONGODB_PASSWORD", "secret")})
         if self.key == "cypress":

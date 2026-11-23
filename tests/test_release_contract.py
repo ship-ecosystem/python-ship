@@ -18,7 +18,7 @@ class ReleaseContractTests(ProjectTestCase):
         self.init("--app", "main:app")
 
     def test_complete_folder_passes_shared_checker_and_no_env_retains_names(self):
-        config = self.write_config(name="fixture", app="main:app", services={"database": "postgres"},
+        config = self.write_config(name="fixture", app="main:app", services={"database": "postgres", "cache": "redis"},
             external_network=["proxy", "metrics"], deploy_commands=[["python", "migrate.py", ""]],
             processes={"socket": {"command": ["python", "socket.py"],
                 "http": {"port": 8081, "role": "websocket", "health": "/ready", "urlSetting": "SOCKET_URL"}}})
@@ -34,7 +34,8 @@ class ReleaseContractTests(ProjectTestCase):
         self.assertEqual(["DB_PASSWORD", "SOCKET_URL"], manifest["env"]["keys"])
         self.assertEqual("process", manifest["services"]["socket"]["role"])
         self.assertEqual(["python", "migrate.py", ""], manifest["deploy"]["commands"][0])
-        self.assertEqual(1, len(manifest["images"]))
+        self.assertEqual(2, len(manifest["images"]))
+        self.assertIn(manifest["services"]["postgres"]["image"], {image["ref"] for image in manifest["images"]})
         self.assertEqual(1, len(manifest["pulledImages"]))
         checker = Path(__file__).resolve().parents[2] / "com.ship.spec/tools/check-release.mjs"
         if checker.is_file():

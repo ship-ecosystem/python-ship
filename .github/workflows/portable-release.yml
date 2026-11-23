@@ -38,7 +38,7 @@ jobs:
           cp scripts/boot_release_fixture.sh dist/ci-release/boot-check.sh
           tar -C dist -czf ci-release.tar.gz ci-release
       - name: Validate the complete canonical release
-        uses: ship-ecosystem/spec@db16bbc24e5a3e66c3a8c10ec42a63042859b1dc
+        uses: ship-ecosystem/spec@a201f5f5b6c1fe6cc5834fb6073da275decaf09a
         with:
           path: dist/ci-release
       - name: Transfer release archive

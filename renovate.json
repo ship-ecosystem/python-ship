@@ -8,7 +8,7 @@
       "customType": "regex",
       "description": "Docker images embedded in built-in service definitions",
       "managerFilePatterns": ["/^src/python_ship/(services|storage|portable_data)[.]py$/"],
-      "matchStrings": ["['\"]image['\"]: ['\"](?<depName>[A-Za-z0-9./_-]+):(?<currentValue>[A-Za-z0-9._-]+)['\"]"],
+      "matchStrings": ["['\"]image['\"]: ['\"](?<depName>[A-Za-z0-9./_-]+):(?<currentValue>[A-Za-z0-9._-]+)['\"]", "\"dockerfile_inline\": \"FROM (?<depName>[A-Za-z0-9./_-]+):(?<currentValue>[A-Za-z0-9._-]+)\\\\n"],
       "datasourceTemplate": "docker",
       "versioningTemplate": "docker"
     },

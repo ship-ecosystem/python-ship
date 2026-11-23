@@ -3,7 +3,6 @@
 from dataclasses import replace
 import os
 import subprocess
-import time
 import unittest
 from unittest.mock import patch
 
@@ -93,6 +92,8 @@ class LiveMutagenTests(DockerProjectTestCase):
         (self.root / "main.py").write_text(self.source("before"))
         (self.root / ".venv").mkdir()
         (self.root / ".venv" / "host-only").write_text("ignore me")
+        (self.root / ".ship-secrets").mkdir()
+        (self.root / ".ship-secrets" / "TOKEN").write_text("ignore private credentials")
         (self.root / ".env").write_text(f"APP_PORT={port}\n")
         with patch.dict(os.environ, {"SHIP_MUTAGEN": "1"}):
             self.assertEqual(0, self.init("--app", "main:app"))
@@ -103,19 +104,14 @@ class LiveMutagenTests(DockerProjectTestCase):
                 self.assertEqual(0, result, output.stderr)
                 path = compose_path(self.root)
                 inspect = subprocess.run(["docker", "compose", "-f", str(path), "exec", "-T", "app", "sh", "-c",
-                                          "test ! -e /app/.venv && test ! -e /app/.env"], cwd=self.root)
+                                          "test ! -e /app/.venv && test ! -e /app/.env && test ! -e /app/.ship-secrets"], cwd=self.root)
                 self.assertEqual(0, inspect.returncode)
                 wait_http(port, expected=b"before")
                 (self.root / "main.py").write_text(self.source("after"))
                 wait_http(port, expected=b"after", timeout=90)
-                deadline = time.monotonic() + 30
-                while True:
-                    worker = subprocess.run(["docker", "compose", "-f", str(path), "exec", "-T", "worker", "python", "-c",
-                                             "assert 'after' in open('/app/main.py').read()"], cwd=self.root, capture_output=True, text=True)
-                    if worker.returncode == 0 or time.monotonic() > deadline:
-                        break
-                    time.sleep(1)
-                self.assertEqual(0, worker.returncode, worker.stderr)
+                import json
+                model = json.loads(path.read_text().split("\n", 1)[1])
+                self.assertNotIn("worker", model["services"])
             finally:
                 with captured():
                     self.assertEqual(0, self.ship("down"))

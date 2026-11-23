@@ -36,6 +36,17 @@ class CapabilityTests(ProjectTestCase):
         self.assertEqual([], FlaskAdapter().validate(config, self.root))
         self.assertIn(target, self.model(config, production=True)["services"]["app"]["command"])
 
+    def test_rabbitmq_credentials_are_encoded_without_touching_external_urls(self):
+        path = Path(__file__).resolve().parents[1] / "src/python_ship/templates/app-entrypoint.py"
+        spec = spec_from_file_location("ship_test_amqp", path)
+        module = module_from_spec(spec)
+        spec.loader.exec_module(module)
+        environment = module.application_environment({"RABBITMQ_HOST": "rabbitmq", "RABBITMQ_USER": "app",
+            "RABBITMQ_PASSWORD": "p@:/", "CELERY_BROKER_URL": "amqp://app:p@:/@rabbitmq:5672//"})
+        self.assertEqual("amqp://app:p%40%3A%2F@rabbitmq:5672/%2F", environment["AMQP_URL"])
+        self.assertEqual(environment["AMQP_URL"], environment["CELERY_BROKER_URL"])
+        self.assertEqual({"AMQP_URL": "amqps://external"}, module.application_environment({"AMQP_URL": "amqps://external"}))
+
     def test_mongodb_uri_encodes_credentials_and_removes_admin_settings(self):
         path = Path(__file__).resolve().parents[1] / "src/python_ship/templates/app-entrypoint.py"
         spec = spec_from_file_location("ship_test_entrypoint", path)

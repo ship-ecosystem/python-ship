@@ -18,6 +18,16 @@ def application_environment(values):
                 "mongodb://" + quote(get("USERNAME"), safe="") + ":" + quote(get("PASSWORD"), safe="") +
                 "@" + get("HOST") + ":27017/" + quote(get("DATABASE"), safe="") +
                 "?authSource=" + quote(get("DATABASE"), safe=""))
+        if re.fullmatch(r"(?:[A-Z][A-Z0-9_]*_)?RABBITMQ_HOST", key):
+            prefix = key.removesuffix("RABBITMQ_HOST")
+            user = quote(environment.get(prefix + "RABBITMQ_USER", "app"), safe="")
+            password = quote(environment.get(prefix + "RABBITMQ_PASSWORD", ""), safe="")
+            host = environment[key]
+            vhost = quote(environment.get(prefix + "RABBITMQ_VHOST", "/"), safe="")
+            uri = f"amqp://{user}:{password}@{host}:5672/{vhost}"
+            environment[prefix + "AMQP_URL"] = uri
+            if not prefix and environment.get("CELERY_BROKER_URL", "").endswith(f"@{host}:5672//"):
+                environment["CELERY_BROKER_URL"] = uri
         if key.endswith(("DB_ROOT_PASSWORD", "MONGODB_ROOT_PASSWORD")):
             environment.pop(key, None)
     return environment

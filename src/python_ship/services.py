@@ -163,6 +163,7 @@ class MeilisearchService:
         prefix = context.env_prefix
         return {
             f"{prefix}MEILISEARCH_URL": f"http://{context.service_name}:7700",
+            f"{prefix}MEILISEARCH_HOST": f"http://{context.service_name}:7700",
             f"{prefix}MEILISEARCH_KEY": context.credential("MEILISEARCH_KEY", "shipsearchkey"),
         }
 
@@ -190,7 +191,11 @@ class RabbitMQService:
     def app_environment(self, context: ServiceContext) -> dict[str, str]:
         user = context.setting("RABBITMQ_USER", "app")
         password = context.credential("RABBITMQ_PASSWORD", "ship")
-        return {f"{context.env_prefix}AMQP_URL": f"amqp://{user}:{password}@{context.service_name}:5672//"}
+        prefix = context.env_prefix
+        return {f"{prefix}AMQP_URL": f"amqp://{user}:{password}@{context.service_name}:5672//",
+                f"{prefix}RABBITMQ_HOST": context.service_name, f"{prefix}RABBITMQ_PORT": "5672",
+                f"{prefix}RABBITMQ_USER": user, f"{prefix}RABBITMQ_PASSWORD": password,
+                f"{prefix}RABBITMQ_VHOST": "/"}
 
 
 class CeleryService:

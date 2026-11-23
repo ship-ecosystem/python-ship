@@ -53,6 +53,8 @@ class PortableService:
         # Framework defaults belong to adapters, not portable infrastructure.
         variables = {key: value for key, value in variables.items()
                      if key.removeprefix(context.env_prefix) not in {"DB_CONNECTION", "CACHE_STORE", "SESSION_DRIVER", "SCOUT_DRIVER", "DB_URL"}}
+        if self.key == "valkey":
+            variables[context.env_prefix + "REDIS_URL"] = f"redis://{context.service_name}:6379/0"
         if self.key == "mongodb":
             variables.pop(context.env_prefix + "MONGODB_URI", None)
             variables.update({context.env_prefix + "MONGODB_HOST": context.service_name,

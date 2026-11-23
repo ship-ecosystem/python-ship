@@ -139,8 +139,8 @@ class CatalogTests(ProjectTestCase):
         model = service.compose_fragment(context)["rabbitmq"]
         self.assertTrue(model["image"].startswith("rabbitmq:4."))
         self.assertEqual(["127.0.0.1:${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"], model["ports"])
-        self.assertEqual({"AMQP_URL": "amqp://${RABBITMQ_USER:-app}:${RABBITMQ_PASSWORD:-ship}@rabbitmq:5672//"},
-                         service.app_environment(context))
+        self.assertEqual("amqp://${RABBITMQ_USER:-app}:${RABBITMQ_PASSWORD:-ship}@rabbitmq:5672//",
+                         service.app_environment(context)["AMQP_URL"])
         _, production = self.context("rabbitmq", production=True)
         self.assertNotIn("ports", service.compose_fragment(production)["rabbitmq"])
 

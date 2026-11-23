@@ -58,7 +58,10 @@ def plan_images(model: dict[str, Any], tag: str) -> tuple[dict[str, Any], list[d
 
 
 def _run(command: list[str], root: Path) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(command, cwd=root, capture_output=True, text=True, check=False)
+    try:
+        result = subprocess.run(command, cwd=root, capture_output=True, text=True, check=False, timeout=600)
+    except subprocess.TimeoutExpired as exc:
+        raise ConfigError(f"Release command {command[0]} {command[1]} timed out after 600 seconds.") from exc
     if result.returncode != 0:
         raise ConfigError(f"`{' '.join(command[:3])}` failed: {result.stderr.strip() or result.stdout.strip()}")
     return result

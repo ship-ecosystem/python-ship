@@ -31,6 +31,7 @@ from .compose import (
 )
 from .config import ConfigError, ShipConfig
 from .contracts import ShipEnvironment
+from .environment import environment_warnings
 from .init import InitOptions, ensure_dockerignore, ensure_gitignore, interactive_terminal, run_init
 from .mutagen import enabled as mutagen_enabled
 from .mutagen import start as start_mutagen
@@ -225,6 +226,15 @@ def create_app(adapter_commands: dict[str, list[str]] | None = None) -> typer.Ty
 
     @app.command("init")
     def init_command(
+        name: Annotated[str | None, typer.Option("--name", help="Stable application and release identity.")] = None,
+        additional_service: Annotated[list[str] | None, typer.Option("--additional-service", help="GROUP=PROVIDER:NAME; repeatable.")] = None,
+        remove_instance: Annotated[list[str] | None, typer.Option("--remove-instance")] = None,
+        process: Annotated[list[str] | None, typer.Option("--process", help="NAME=COMMAND or NAME=JSON; repeatable.")] = None,
+        remove_process: Annotated[list[str] | None, typer.Option("--remove-process")] = None,
+        network: Annotated[list[str] | None, typer.Option("--network", help="External network; repeatable.")] = None,
+        no_network: Annotated[bool, typer.Option("--no-network")] = False,
+        deploy_command: Annotated[list[str] | None, typer.Option("--deploy-command")] = None,
+        broadcasting: Annotated[str | None, typer.Option(help="Real-time server (centrifugo), or none.")] = None,
         app_target: Annotated[str | None, typer.Option("--app", help="App import target, such as main:app.")] = None,
         framework: Annotated[str | None, typer.Option(help="Framework adapter: generic, django, fastapi, flask, or an extension.")] = None,
         server: Annotated[str | None, typer.Option(help="Web server: uvicorn, hypercorn, granian (ASGI); gunicorn, granian (WSGI); or an extension. Defaults to the one recommended for the app.")] = None,
@@ -245,8 +255,10 @@ def create_app(adapter_commands: dict[str, list[str]] | None = None) -> typer.Ty
     ) -> int:
         """Pick services, write ship.json and publish the ship/ directory."""
         options = InitOptions(
+            name=name, additional=additional_service, remove_instances=remove_instance, process_options=process,
+            remove_processes=remove_process, networks=network, clear_networks=no_network, deploy=deploy_command,
             app=app_target, framework=framework, server=server, python=python_version,
-            selections={"database": database, "cache": cache, "broker": broker, "tasks": tasks,
+            selections={"broadcasting": broadcasting, "database": database, "cache": cache, "broker": broker, "tasks": tasks,
                         "storage": storage, "search": search,
                         "mail": mail, "testing": testing, "frontend": frontend},
             silo_image=silo_image, node_assets=node_assets, force=force,
@@ -322,6 +334,8 @@ def create_app(adapter_commands: dict[str, list[str]] | None = None) -> typer.Ty
             if problems:
                 typer.echo(f"ship: {len(problems)} problem{'s' if len(problems) != 1 else ''} found.", err=True)
                 return 1
+            for message in environment_warnings(read_config(project), project):
+                warn(message)
             warning = stub_version_warning(project)
             if warning:
                 warn(warning)

@@ -7,10 +7,12 @@ import json
 from pathlib import Path
 import re
 import sys
+from typing import Any
 
 import typer
 
-from . import __version__
+from . import __version__, wizard
+from .capabilities import process_suggestions
 from .compose import app_interface, build_compose, project_name
 from .config import (
     GROUPS_SUPPORTING_ADDITIONAL_INSTANCES,
@@ -21,6 +23,7 @@ from .config import (
     ShipConfig,
 )
 from .contracts import FrameworkAdapter
+from .environment import ensure_environment, environment_warnings
 from .plugins import Registry, load_extensions
 from .security import DEFAULT_PYTHON, problem_with
 from .stubs import asset_stub_problem, publish_stubs, server_stub_problem, stub_version_warning
@@ -36,6 +39,7 @@ GROUPS = {
     "storage": "object storage",
     "search": "search engine",
     "mail": "mail capture service",
+    "broadcasting": "real-time server",
     "testing": "browser testing driver",
     "frontend": "frontend toolchain",
 }
@@ -78,6 +82,14 @@ export default defineConfig({
 
 @dataclass
 class InitOptions:
+    name: str | None = None
+    additional: list[str] | None = None
+    remove_instances: list[str] | None = None
+    process_options: list[str] | None = None
+    remove_processes: list[str] | None = None
+    networks: list[str] | None = None
+    deploy: list[str] | None = None
+    clear_networks: bool = False
     app: str | None = None
     framework: str | None = None
     server: str | None = None
@@ -99,6 +111,9 @@ def interactive_terminal() -> bool:
 
 def select(label: str, choices: dict[str, str], default: str | None = None) -> str:
     """A numbered picker; accepts the number, the key or the label."""
+    session = wizard.active.get()
+    if session and session.rich:
+        return session.ask("select", label, default if default in choices else next(iter(choices)), choices)
     keys = list(choices)
     default = default if default in choices else keys[0]
     typer.echo(f"\n{label}:")
@@ -106,7 +121,7 @@ def select(label: str, choices: dict[str, str], default: str | None = None) -> s
         marker = "*" if key == default else " "
         typer.echo(f" {marker} [{index}] {choices[key]}")
     while True:
-        answer = str(typer.prompt(label, default=str(keys.index(default) + 1))).strip()
+        answer = str(wizard.prompt(label, default=str(keys.index(default) + 1))).strip()
         if answer.isdigit() and 1 <= int(answer) <= len(keys):
             return keys[int(answer) - 1]
         for key, text in choices.items():
@@ -144,8 +159,10 @@ def _groups(registry: Registry) -> dict[str, str]:
 
 def _prompt_additional(registry: Registry, existing: list[AdditionalService]) -> list[AdditionalService]:
     additional = list(existing)
+    if additional:
+        additional = [entry for entry in additional if wizard.confirm(f"Keep instance {entry.name} ({entry.service})?", default=True)]
     used = {entry.name for entry in additional}
-    while typer.confirm(
+    while wizard.confirm(
         "Add a named additional service instance (e.g. a second database)?" if not additional else "Add another one?",
         default=False,
     ):
@@ -155,7 +172,7 @@ def _prompt_additional(registry: Registry, existing: list[AdditionalService]) ->
         group = select("Which kind of service?", groups)
         service = select("Which one?", {item.key: item.label for item in registry.in_group(group)})
         while True:
-            name = str(typer.prompt(
+            name = str(wizard.prompt(
                 "Name this instance (its env var prefix and Compose service suffix, e.g. \"analytics\")"
             )).strip().lower()
             if not INSTANCE_NAME.fullmatch(name):
@@ -188,7 +205,7 @@ def _prompt_silo_image(current: str) -> str:
 
 def _prompt_python(current: str) -> str:
     while True:
-        answer = str(typer.prompt("Python version", default=current)).strip()
+        answer = str(wizard.prompt("Python version", default=current)).strip()
         problem = problem_with(answer)
         if problem is None:
             return answer
@@ -203,6 +220,11 @@ def resolve_config(root: Path, options: InitOptions) -> ShipConfig:
     """Combine flags, answers, the existing ship.json and detection into the new config."""
     existing = ShipConfig.lenient(root) if (root / "ship.json").exists() else None
     base = existing or ShipConfig()
+    name = options.name or base.name or project_name(base, root)
+    if interactive := options.interactive:
+        if not options.name:
+            name = str(wizard.prompt("Project name (keep stable after deployment)", default=name)).strip()
+
     registry = load_extensions(base)
     interactive = options.interactive
 
@@ -217,7 +239,7 @@ def resolve_config(root: Path, options: InitOptions) -> ShipConfig:
     suggested = existing.app if existing and existing.framework == framework else _default_app(adapter, root)
     app = options.app
     if app is None and interactive:
-        app = str(typer.prompt("App target (module:callable)", default=suggested or "main:app")).strip()
+        app = str(wizard.prompt("App target (module:callable)", default=suggested or "main:app")).strip()
     app = app or suggested
     if not app:
         raise ConfigError(
@@ -238,7 +260,15 @@ def resolve_config(root: Path, options: InitOptions) -> ShipConfig:
 
     services = dict(base.services)
     flags = options.selections or {}
-    for group, label in _groups(registry).items():
+    groups = _groups(registry)
+    selected_groups = set(groups)
+    session = wizard.active.get()
+    if interactive and session and session.rich:
+        selected_groups = set(session.ask("checkbox", "Select kinds of service", list(services), groups))
+        services = {key: value for key, value in services.items() if key in selected_groups}
+    for group, label in groups.items():
+        if interactive and group not in selected_groups and flags.get(group) is None:
+            continue
         choices = {NONE: "None", **{item.key: item.label for item in registry.in_group(group)}}
         flagged = flags.get(group)
         if flagged is not None:
@@ -254,7 +284,14 @@ def resolve_config(root: Path, options: InitOptions) -> ShipConfig:
         else:
             services[group] = answer
 
-    additional = list(base.additional_services)
+    additional = [entry for entry in base.additional_services if entry.name not in (options.remove_instances or [])]
+    for raw in options.additional or []:
+        try:
+            group, rest = raw.split("=", 1)
+            service, instance = rest.split(":", 1)
+        except ValueError as exc:
+            raise ConfigError("--additional-service requires GROUP=PROVIDER:NAME.") from exc
+        additional.append(AdditionalService(group, service, instance))
     if interactive:
         additional = _prompt_additional(registry, additional)
 
@@ -272,9 +309,44 @@ def resolve_config(root: Path, options: InitOptions) -> ShipConfig:
     elif interactive:
         python = _prompt_python(base.python or DEFAULT_PYTHON)
 
-    return replace(
+    processes = {key: value for key, value in base.processes.items() if key not in (options.remove_processes or [])}
+    for raw in options.process_options or []:
+        key, sep, value = raw.partition("=")
+        if not sep:
+            raise ConfigError("--process requires NAME=COMMAND or NAME=JSON.")
+        try:
+            processes[key] = json.loads(value) if value.startswith(("{", "[")) else value
+        except ValueError as exc:
+            raise ConfigError(f"Invalid JSON process {key!r}.") from exc
+    networks = None if options.clear_networks else options.networks if options.networks is not None else base.external_network
+    if interactive:
+        processes = {key: value for key, value in processes.items() if wizard.confirm(f"Keep process {key}?", default=True)}
+        for key, value in process_suggestions(adapter, replace(base, framework=framework, app=app), root).items():
+            if key not in processes and wizard.confirm(f"Run suggested process {key} in production?", default=False):
+                processes[key] = value
+        while wizard.confirm("Add a custom production process?", default=False):
+            key = str(wizard.prompt("Process name")).strip()
+            command = str(wizard.prompt("Process command")).strip()
+            definition: dict[str, Any] = {"command": command}
+            if wizard.confirm("Does this process receive HTTP or WebSocket traffic?", default=False):
+                definition["http"] = {"port": int(wizard.prompt("Container port", type=int)),
+                    "role": str(wizard.prompt("HTTP role", default="websocket")),
+                    "health": str(wizard.prompt("Healthy path (empty when unknown)", default="")) or None,
+                    "urlSetting": str(wizard.prompt("Public URL setting name (empty when unknown)", default="")) or None}
+            health = str(wizard.prompt("Healthcheck command (optional)", default="")).strip()
+            if health:
+                definition["healthcheck"] = health
+            processes[key] = definition
+        if options.networks is None and not options.clear_networks:
+            current = ",".join(base.external_networks)
+            answer = str(wizard.prompt("External networks (comma-separated, optional)", default=current)).strip()
+            networks = [item.strip() for item in answer.split(",") if item.strip()] or None
+    result = replace(
         base,
-        name=base.name or project_name(base, root),
+        name=name,
+        processes=processes,
+        external_network=networks,
+        deploy_commands=list(options.deploy) if options.deploy is not None else base.deploy_commands,
         framework=framework,
         app=app,
         server=server,
@@ -285,6 +357,11 @@ def resolve_config(root: Path, options: InitOptions) -> ShipConfig:
         node_assets=base.node_assets if options.node_assets is None else options.node_assets,
         django_collectstatic=base.django_collectstatic and framework == "django",
     )
+    checked, problems = ShipConfig.from_data(result.to_json())
+    if problems:
+        raise ConfigError(" ".join(problems))
+    assert checked is not None
+    return checked
 
 
 def ensure_dockerignore(root: Path) -> None:
@@ -339,6 +416,22 @@ def _vite_reminder(root: Path, config: ShipConfig) -> str | None:
 
 
 def run_init(root: Path, options: InitOptions) -> int:
+    # Redirected streams retain the simple prompt implementation, useful for scripts/tests.
+    if not options.interactive or not interactive_terminal():
+        return _run_init(root, options)
+    session = wizard.terminal_wizard()
+    token = wizard.active.set(session)
+    try:
+        while True:
+            try:
+                return _run_init(root, options)
+            except wizard.Back:
+                session.rewind()
+    finally:
+        wizard.active.reset(token)
+
+
+def _run_init(root: Path, options: InitOptions) -> int:
     dockerfile = root / "ship" / "Dockerfile"
     had_config = (root / "ship.json").exists()
     if dockerfile.exists() and not had_config and not options.force:
@@ -346,14 +439,22 @@ def run_init(root: Path, options: InitOptions) -> int:
     config = resolve_config(root, options)
     # Validate the complete model before writing any project file.
     build_compose(config, root)
+    build_compose(config, root, production=True)
     for problem in (server_stub_problem(root, config), asset_stub_problem(root, config)):
         if problem and dockerfile.exists() and not options.force:
             raise ConfigError(problem)
+    typer.echo("Files: ship.json, ship/ templates, .gitignore, .dockerignore and missing environment settings.\nCtrl+U returns to the previous question.\n")
+    typer.echo("Planned ship.json:\n" + json.dumps(config.to_json(), indent=2))
+    if options.interactive and not wizard.confirm("Write configuration, templates and missing environment settings?", default=True):
+        raise ConfigError("Initialization cancelled; no project files were written.")
     require_uv()
     published = publish_stubs(root, config, force=options.force)
     config.write(root)
     ensure_dockerignore(root)
     ensure_gitignore(root)
+    ensure_environment(config, root)
+    for message in environment_warnings(config, root):
+        typer.echo(f"ship: warning: {message}", err=True)
     if not published:
         warning = stub_version_warning(root)
         if warning:

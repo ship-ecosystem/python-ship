@@ -30,7 +30,7 @@ classifiers = [
     "Topic :: System :: Software Distribution",
     "Typing :: Typed",
 ]
-dependencies = ["typer>=0.27,<1"]
+dependencies = ["typer>=0.27,<1", "questionary>=2.1,<3"]
 
 [project.scripts]
 ship = "python_ship.cli:main"

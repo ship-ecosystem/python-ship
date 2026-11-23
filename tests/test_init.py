@@ -16,9 +16,21 @@ from tests.helpers import ProjectTestCase, captured, no_uv_prompt
 def answers(prompts, confirms=()):
     """Script the interactive prompts in order."""
     prompts, confirms = list(prompts), list(confirms)
+    def ask(label, *args, **kwargs):
+        if label.startswith("Project name") or label.startswith("External networks"):
+            return kwargs.get("default", "")
+        if label == "Select a real-time server":
+            return "none"
+        return prompts.pop(0)
+    def confirm(label, *args, **kwargs):
+        if label.startswith("Write configuration"):
+            return True
+        if label.startswith("Add a custom") or label.startswith("Run suggested"):
+            return False
+        return confirms.pop(0)
     with patch("python_ship.cli.interactive_terminal", return_value=True), \
-            patch("python_ship.init.typer.prompt", side_effect=lambda *a, **k: prompts.pop(0)) as prompt, \
-            patch("python_ship.init.typer.confirm", side_effect=lambda *a, **k: confirms.pop(0)):
+            patch("python_ship.init.typer.prompt", side_effect=ask) as prompt, \
+            patch("python_ship.init.typer.confirm", side_effect=confirm):
         yield prompt
     if prompts or confirms:
         raise AssertionError(f"Unused answers: {prompts} {confirms}")
@@ -203,7 +215,7 @@ class InteractiveInitTests(ProjectTestCase):
 
         with patch("python_ship.cli.interactive_terminal", return_value=True), \
                 patch("python_ship.init.typer.prompt", side_effect=accept_default), \
-                patch("python_ship.init.typer.confirm", return_value=False):
+                patch("python_ship.init.typer.confirm", side_effect=lambda label, **kwargs: label.startswith("Write configuration")):
             code, output = self.run_init()
         self.assertEqual(0, code, output.stderr)
         config = ShipConfig.read(self.root)

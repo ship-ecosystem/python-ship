@@ -14,11 +14,8 @@ the same commands, the same `ship.json` vocabulary and the same release
 artifact, for any ASGI or WSGI app — a plain callable, Django, FastAPI or
 Flask built in, anything else through a community adapter.
 
-**Status: active development.** The shared workflow follows PHP Ship, with Python
-adapters for no framework, Django, FastAPI and Flask, and Uvicorn, Hypercorn,
-Gunicorn and Granian servers. See [parity and verification](docs/parity-report.md)
-for the current local evidence and remaining release gates. Local verification
-is separate from the prepared Linux/macOS/Windows CI matrix.
+Ship supports Uvicorn, Hypercorn, Gunicorn, and Granian. See
+[upgrading an existing project](docs/upgrading.md) for configuration and data migrations.
 
 ## Contents
 
@@ -569,11 +566,7 @@ Both build a materially different image from `ship up`'s development one:
 
 ### Python security floor
 
-Ship refuses to build on a Python release with known security
-vulnerabilities. The current floor comes from the October 2026 expedited
-security releases, which fixed the bundled pip certificate-chain problem,
-tarfile link handling (CVE-2026-114583), and bundled Expat vulnerabilities
-(CVE-2026-77214, CVE-2026-102633):
+Ship enforces the following minimum Python versions for application images.
 
 | Branch | Oldest release Ship builds on |
 | --- | --- |
@@ -910,10 +903,7 @@ for a worked example, and the installable
 
 ## Contributing
 
-See [`docs/adding-a-service.md`](https://github.com/ship-ecosystem/python-ship/blob/main/docs/adding-a-service.md)
-for adding a service or adapter, and
-[`docs/roadmap.md`](https://github.com/ship-ecosystem/python-ship/blob/main/docs/roadmap.md)
-for what's built and what's planned.
+See [adding a service](docs/adding-a-service.md) for service and adapter interfaces.
 
 ```sh
 python scripts/check_local.py   # Ruff, mypy, unit tests, then build and smoke-test both distributions

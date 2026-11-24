@@ -40,7 +40,6 @@ Homepage = "https://github.com/ship-ecosystem/python-ship"
 Documentation = "https://github.com/ship-ecosystem/python-ship#readme"
 Repository = "https://github.com/ship-ecosystem/python-ship"
 Issues = "https://github.com/ship-ecosystem/python-ship/issues"
-Changelog = "https://github.com/ship-ecosystem/python-ship/blob/main/CHANGELOG.md"
 
 [tool.setuptools.dynamic]
 version = {attr = "python_ship.__version__"}

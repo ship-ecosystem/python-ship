@@ -13,8 +13,8 @@ commit on `main`. The package version has one source,
 
 ## Steps
 
-1. On a branch, set `__version__` in `src/python_ship/__init__.py`, and move
-   the `Unreleased` changelog entries under `## [X.Y.Z] - YYYY-MM-DD`.
+1. On a branch, set `__version__` in `src/python_ship/__init__.py`. Add a
+   `CHANGELOG.md` entry under `## [X.Y.Z]` starting with the stable `1.0.0` release.
 2. Publish coordinated spec/schema updates before the candidate, then run the local checks and the Docker suites:
 
    ```sh
@@ -38,14 +38,12 @@ commit on `main`. The package version has one source,
    git push origin vX.Y.Z
    ```
 
-5. The tag starts `publish-pypi.yml`. Its first job refuses to continue
-   unless the tag matches the version and the changelog, the commit is on
-   `main`, and the quality, Docker integration and portable-release workflows
-   all succeeded for that commit. It then rebuilds and checks the wheel and
-   sdist from the tag.
+5. The tag starts `publish-pypi.yml`. The workflow checks the tag and package
+   version, verifies the commit is on `main` and checks its CI results. It then
+   builds and tests the wheel and source distribution from the tag.
 6. Approve the `pypi` deployment in the workflow run. The upload job publishes
    with PyPI attestations, and the last job creates the GitHub release with
-   the changelog section and both distributions attached.
+   both distributions attached.
 7. Check the release in a clean environment:
 
    ```sh

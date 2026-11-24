@@ -142,7 +142,7 @@ ship-rabbitmq`) and selects it by entry point name in `ship.json`'s
 is a complete, tested package.
 
 The contracts are the public API and follow semantic versioning: before 1.0,
-a minor release may change them, and the changelog says how. Declare a
+a minor release may change them. Declare a
 `python-ship` range that excludes the next minor version, and test against
 each release you support. Failures are reported as configuration errors
 naming the extension: not installed, two entry points with the same name, an

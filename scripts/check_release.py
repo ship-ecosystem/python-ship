@@ -28,11 +28,13 @@ def main() -> None:
         problems.append("pyproject.toml must take its version dynamically from python_ship.__version__")
     if tag != f"v{version}":
         problems.append(f"tag {tag!r} does not match package version {version!r} (expected v{version})")
-    if not re.fullmatch(r"\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?", version):
+    version_match = re.fullmatch(r"(\d+)\.\d+\.\d+((?:a|b|rc)\d+)?", version)
+    if not version_match:
         problems.append(f"{version!r} is not a final or pre-release version; publish no .dev or local versions")
-    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    if f"## [{version}]" not in changelog:
-        problems.append(f"CHANGELOG.md has no '## [{version}]' section")
+    elif int(version_match[1]) >= 1 and version_match[2] is None:
+        changelog = ROOT / "CHANGELOG.md"
+        if not changelog.is_file() or f"## [{version}]" not in changelog.read_text(encoding="utf-8"):
+            problems.append(f"CHANGELOG.md has no '## [{version}]' section")
     if problems:
         raise SystemExit("Release check failed:\n- " + "\n- ".join(problems))
     print(f"Release tag {tag} matches python-ship {version}.")
